@@ -1,0 +1,30 @@
+{
+    "expo":  {
+                 "name":  "Smile",
+                 "slug":  "smile-customer",
+                 "scheme":  "smile",
+                 "version":  "0.1.0",
+                 "orientation":  "portrait",
+                 "userInterfaceStyle":  "automatic",
+                 "newArchEnabled":  true,
+                 "plugins":  [
+                                 "expo-secure-store",
+                                 [
+                                     "expo-location",
+                                     {
+                                         "locationWhenInUsePermission":  "Smile uses your location to save a delivery place."
+                                     }
+                                 ]
+                             ],
+                 "ios":  {
+                             "supportsTablet":  true,
+                             "bundleIdentifier":  "ng.smile.customer"
+                         },
+                 "android":  {
+                                 "package":  "ng.smile.customer",
+                                 "adaptiveIcon":  {
+                                                      "backgroundColor":  "#194c3a"
+                                                  }
+                             }
+             }
+}

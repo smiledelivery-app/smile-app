@@ -1,0 +1,4 @@
+import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+
+export default function PrimaryButton({title,onPress,disabled=false,secondary=false,style}:{title:string;onPress:()=>void;disabled?:boolean;secondary?:boolean;style?:StyleProp<ViewStyle>}){return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.button,secondary&&s.secondary,disabled&&s.disabled,style]}><Text style={[s.text,secondary&&s.secondaryText]}>{title}</Text></Pressable>}
+const s=StyleSheet.create({button:{minHeight:48,paddingHorizontal:16,borderRadius:14,backgroundColor:'#194c3a',alignItems:'center',justifyContent:'center'},secondary:{backgroundColor:'white',borderWidth:1,borderColor:'#dce4d6'},text:{fontSize:15,fontWeight:'800',color:'white'},secondaryText:{color:'#194c3a'},disabled:{opacity:.55}});

@@ -1,0 +1,352 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  VENDOR
+  RIDER
+  ADMIN
+}
+enum VendorStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+enum OrderStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  ACCEPTED_BY_VENDOR
+  PREPARING
+  READY_FOR_PICKUP
+  RIDER_ASSIGNED
+  PICKED_UP
+  DELIVERED
+  PAYMENT_FAILED
+  REJECTED
+  CANCELLED
+  REFUND_PENDING
+  REFUNDED
+  DELIVERY_EXCEPTION
+}
+enum DeliveryStatus {
+  OFFERING
+  ASSIGNED
+  PICKED_UP
+  DELIVERED
+  UNASSIGNED
+  EXCEPTION
+}
+enum RiderOfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String?  @unique
+  phone        String?  @unique
+  passwordHash String
+  name         String
+  roles        Role[]   @default([CUSTOMER])
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  addresses    Address[]
+  vendor       Vendor?
+  rider        RiderProfile?
+  orders       Order[]
+  sessions     Session[]
+  auditLogs    AuditLog[]
+  wallet       Wallet?
+  walletTransactions WalletTransaction[]
+}
+
+model Address {
+  id String @id @default(cuid())
+  userId String
+  label String
+  line1 String
+  city String
+  latitude Decimal? @db.Decimal(9,6)
+  longitude Decimal? @db.Decimal(9,6)
+  geocodedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  orders Order[]
+  @@index([userId])
+  @@index([geocodedAt])
+}
+
+model Session {
+  id String @id @default(cuid())
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@index([userId,expiresAt])
+}
+
+model Vendor {
+  id String @id @default(cuid())
+  ownerId String @unique
+  name String
+  slug String @unique
+  description String @default("")
+  cuisine String
+  address String
+  contactPhone String?
+  logoUrl String?
+  coverImageUrl String?
+  cacNumber String?
+  cacDocumentUrl String?
+  latitude Decimal? @db.Decimal(9,6)
+  longitude Decimal? @db.Decimal(9,6)
+  geocodedAt DateTime?
+  status VendorStatus @default(DRAFT)
+  isOpen Boolean @default(false)
+  isDemo Boolean @default(false)
+  termsAcceptedAt DateTime?
+  createdAt DateTime @default(now())
+  owner User @relation(fields:[ownerId], references:[id])
+  products Product[]
+  orders Order[]
+  @@index([status,isOpen])
+  @@index([geocodedAt])
+}
+
+model Product {
+  id String @id @default(cuid())
+  vendorId String
+  name String
+  description String @default("")
+  category String
+  priceMinor Int
+  imageUrl String?
+  available Boolean @default(true)
+  stock Int?
+  isDemo Boolean @default(false)
+  createdAt DateTime @default(now())
+  vendor Vendor @relation(fields:[vendorId], references:[id], onDelete:Cascade)
+  orderItems OrderItem[]
+  addons ProductAddon[]
+  @@index([vendorId,available])
+}
+
+model ProductAddon {
+  id String @id @default(cuid())
+  productId String
+  name String
+  priceMinor Int
+  available Boolean @default(true)
+  createdAt DateTime @default(now())
+  product Product @relation(fields:[productId], references:[id], onDelete:Cascade)
+  @@index([productId,available])
+}
+
+model Order {
+  id String @id @default(cuid())
+  customerId String
+  vendorId String
+  status OrderStatus @default(PENDING_PAYMENT)
+  subtotalMinor Int
+  deliveryFeeMinor Int
+  totalMinor Int
+  idempotencyKey String @unique
+  addressId String?
+  deliveryNotes String?
+  isDemo Boolean @default(false)
+  createdAt DateTime @default(now())
+  customer User @relation(fields:[customerId], references:[id])
+  vendor Vendor @relation(fields:[vendorId], references:[id])
+  address Address? @relation(fields:[addressId], references:[id])
+  items OrderItem[]
+  events OrderStatusEvent[]
+  payments Payment[]
+  delivery Delivery?
+  walletTransactions WalletTransaction[]
+  walletTransactions WalletTransaction[]
+  @@index([customerId,createdAt])
+  @@index([vendorId,status])
+}
+
+model OrderItem {
+  id String @id @default(cuid())
+  orderId String
+  productId String
+  nameSnapshot String
+  unitPriceMinor Int
+  quantity Int
+  order Order @relation(fields:[orderId], references:[id], onDelete:Cascade)
+  product Product @relation(fields:[productId], references:[id])
+  addons OrderItemAddon[]
+  @@index([orderId])
+}
+
+model OrderItemAddon {
+  id String @id @default(cuid())
+  orderItemId String
+  nameSnapshot String
+  unitPriceMinor Int
+  quantity Int
+  orderItem OrderItem @relation(fields:[orderItemId], references:[id], onDelete:Cascade)
+  @@index([orderItemId])
+}
+
+model OrderStatusEvent {
+  id String @id @default(cuid())
+  orderId String
+  status OrderStatus
+  actorId String
+  note String?
+  createdAt DateTime @default(now())
+  order Order @relation(fields:[orderId], references:[id], onDelete:Cascade)
+  @@index([orderId,createdAt])
+}
+
+model Payment {
+  id String @id @default(cuid())
+  orderId String
+  amountMinor Int
+  status String
+  provider String
+  providerReference String? @unique
+  isDemo Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order Order @relation(fields:[orderId], references:[id], onDelete:Cascade)
+  @@index([orderId,status])
+}
+
+model Wallet {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  balanceMinor        Int      @default(0)
+  currency            String   @default("NGN")
+  status              String   @default("ACTIVE")
+  paystackCustomerCode String? @unique
+  dvaAccountNumber    String?  @unique
+  dvaAccountName      String?
+  dvaBankName         String?
+  dvaBankSlug         String?
+  dvaId               String?  @unique
+  dvaStatus           String   @default("PENDING")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  user                User     @relation(fields:[userId], references:[id], onDelete:Cascade)
+  transactions        WalletTransaction[]
+}
+
+model WalletTransaction {
+  id           String   @id @default(cuid())
+  walletId     String
+  userId       String
+  type         String
+  direction    String
+  amountMinor  Int
+  balanceAfter Int
+  reference    String   @unique
+  orderId      String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  wallet       Wallet   @relation(fields:[walletId], references:[id], onDelete:Cascade)
+  user         User     @relation(fields:[userId], references:[id], onDelete:Cascade)
+  order        Order?   @relation(fields:[orderId], references:[id], onDelete:SetNull)
+  @@index([walletId, createdAt])
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
+model PaystackWebhookEvent {
+  id         String   @id @default(cuid())
+  eventKey   String   @unique
+  event      String
+  reference  String?
+  payload    Json
+  receivedAt DateTime @default(now())
+  processedAt DateTime?
+  @@index([event, receivedAt])
+  @@index([reference])
+}
+
+model RiderProfile {
+  id String @id @default(cuid())
+  userId String @unique
+  status VendorStatus @default(DRAFT)
+  available Boolean @default(false)
+  vehicleType String?
+  serviceArea String @default("")
+  location RiderLocation?
+  offers RiderOffer[]
+  deliveries Delivery[]
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+}
+
+model RiderLocation {
+  id String @id @default(cuid())
+  riderId String @unique
+  latitude Decimal @db.Decimal(9,6)
+  longitude Decimal @db.Decimal(9,6)
+  updatedAt DateTime @updatedAt
+  rider RiderProfile @relation(fields:[riderId], references:[id], onDelete:Cascade)
+  @@index([updatedAt])
+}
+
+model Delivery {
+  id String @id @default(cuid())
+  orderId String @unique
+  assignedRiderId String?
+  status DeliveryStatus @default(OFFERING)
+  createdAt DateTime @default(now())
+  assignedAt DateTime?
+  pickedUpAt DateTime?
+  deliveredAt DateTime?
+  proofAttempts Int @default(0)
+  pickupProofAttempts Int @default(0)
+  pickupVerifiedAt DateTime?
+  order Order @relation(fields:[orderId], references:[id], onDelete:Cascade)
+  assignedRider RiderProfile? @relation(fields:[assignedRiderId], references:[id], onDelete:SetNull)
+  offers RiderOffer[]
+  @@index([status,createdAt])
+  @@index([assignedRiderId,status])
+}
+
+model RiderOffer {
+  id String @id @default(cuid())
+  deliveryId String
+  riderId String
+  pickupDistanceMeters Int?
+  status RiderOfferStatus @default(PENDING)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  delivery Delivery @relation(fields:[deliveryId], references:[id], onDelete:Cascade)
+  rider RiderProfile @relation(fields:[riderId], references:[id], onDelete:Cascade)
+  @@unique([deliveryId,riderId])
+  @@index([riderId,status,expiresAt])
+  @@index([deliveryId,status,expiresAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  actorId String
+  action String
+  targetType String
+  targetId String
+  metadata Json?
+  isDemo Boolean @default(false)
+  createdAt DateTime @default(now())
+  actor User @relation(fields:[actorId], references:[id], onDelete:Restrict)
+  @@index([actorId,createdAt])
+  @@index([targetType,targetId,createdAt])
+}

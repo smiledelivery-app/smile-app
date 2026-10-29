@@ -1,0 +1,2 @@
+﻿ALTER TABLE "Delivery" ADD COLUMN "pickupProofAttempts" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Delivery" ADD COLUMN "pickupVerifiedAt" TIMESTAMP(3);

@@ -1,0 +1,67 @@
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { RiderDelivery, RiderOffer, RiderProfile } from '@makanza/mobile-core';
+import type { AppColors } from '../theme/colors';
+import type { RiderTab } from './RoleTabBar';
+import RoleTabBar from './RoleTabBar';
+import PrimaryButton from '../components/PrimaryButton';
+import FormField from '../components/FormField';
+import OfferCard from '../rider/OfferCard';
+import DeliveryMap from '../rider/DeliveryMap';
+
+type Props = {
+  token: string; authorized: boolean; profile: RiderProfile | null; offers: RiderOffer[]; deliveries: RiderDelivery[];
+  loading: boolean; busy: string; error: string; notice: string; locationMessage: string; locationSharing: boolean;
+  locationPermissionNeeded: boolean; vehicleType: string; serviceArea: string; termsAccepted: boolean;
+  completionCodes: Record<string, string>; pickupCodes: Record<string, string>; colors: AppColors;
+  onReload: () => void; onAvailability: (available: boolean) => void; onAccept: (offer: RiderOffer) => void;
+  onReject: (offer: RiderOffer) => void; onPickup: (delivery: RiderDelivery, code:string) => void;
+  onComplete: (delivery: RiderDelivery) => void; onCode: (deliveryId: string, code: string) => void;
+  onPickupCode: (deliveryId:string,code:string)=>void;
+  onShareLocation: () => void; onOpenSettings: () => void; onVehicle: (value: string) => void;
+  onArea: (value: string) => void; onTerms: () => void; onApply: () => void; onSignOut: () => void;
+};
+
+export default function RiderWorkspace(p: Props) {
+  const [tab, setTab] = useState<RiderTab>('home');
+  const c = p.colors; const s = styles(c);
+  const approved = p.profile?.status === 'APPROVED';
+  const active = p.deliveries.filter(item => item.status === 'ASSIGNED' || item.status === 'PICKED_UP');
+  const status = p.profile?.status ?? 'NOT APPLIED';
+
+  return <View style={s.flex}>
+    <ScrollView key={tab} style={s.flex} contentContainerStyle={s.content}>
+      {tab === 'home' && <>
+        <View style={s.hero}><View style={s.heroCopy}><Text style={s.eyebrow}>RIDER WORKSPACE</Text><Text style={s.heroTitle}>{approved ? p.profile?.available ? 'Youâ€™re online.' : 'Ready when you are.' : 'Your day, in motion.'}</Text><Text style={s.heroLead}>{approved ? `${p.profile?.vehicleType ?? 'Rider'} Â· ${p.profile?.serviceArea ?? 'Service area'}` : 'Get approved, go online, and receive eligible delivery offers.'}</Text></View><View style={s.orbit}><Text style={s.orbitIcon}>â†—</Text></View></View>
+        {p.notice ? <Text style={s.notice}>{p.notice}</Text> : null}
+        {!p.authorized ? <View style={s.card}><Text style={s.cardTitle}>Apply to ride with Smile</Text><Text style={s.copy}>Rider access is granted after your application is reviewed.</Text><FormField label="Vehicle type" value={p.vehicleType} onChangeText={p.onVehicle} placeholder="Motorcycle, bicycle, car" dark={c.isDark}/><FormField label="Preferred service area" value={p.serviceArea} onChangeText={p.onArea} placeholder="For example, Yaba" dark={c.isDark}/><Pressable style={s.terms} accessibilityRole="checkbox" accessibilityState={{ checked: p.termsAccepted }} onPress={p.onTerms}><Text style={s.check}>{p.termsAccepted ? 'â˜‘' : 'â–¡'}</Text><Text style={s.copy}>I accept the rider terms and platform policies.</Text></Pressable>{p.error ? <Text style={s.error}>{p.error}</Text> : null}<PrimaryButton title={p.busy === 'application' ? 'Submittingâ€¦' : 'Submit rider application'} disabled={p.busy === 'application' || !p.termsAccepted || p.vehicleType.trim().length < 3 || p.serviceArea.trim().length < 2} onPress={p.onApply} style={s.button}/></View> : !approved ? <View style={s.card}><Text style={s.cardTitle}>{status === 'SUSPENDED' ? 'Rider access suspended' : `Application ${status.replaceAll('_', ' ').toLowerCase()}`}</Text><Text style={s.copy}>{status === 'PENDING_REVIEW' ? 'Availability and delivery offers will unlock after approval.' : 'Contact support for help with your rider account.'}</Text></View> : <View style={s.card}><View style={s.row}><View><Text style={s.cardTitle}>{p.profile?.available ? 'Youâ€™re online' : active.length ? 'On an active delivery' : 'Youâ€™re offline'}</Text><Text style={s.copy}>{p.profile?.serviceArea} Â· {p.profile?.vehicleType}</Text></View><View style={[s.pill, p.profile?.available && s.pillActive]}><Text style={s.pillText}>{p.profile?.available ? 'ONLINE' : active.length ? 'ON DELIVERY' : 'OFFLINE'}</Text></View></View><Text style={s.copy}>Location sharing runs while the app is open. Backgrounding the app takes you offline.</Text>{active.length === 0 && <PrimaryButton title={p.busy === 'availability' ? 'Updatingâ€¦' : p.profile?.available ? 'Go offline' : 'Go online'} disabled={p.busy === 'availability'} secondary={!p.profile?.available} onPress={() => p.onAvailability(!p.profile?.available)} style={s.button}/>}{p.locationPermissionNeeded && <PrimaryButton title="Open location settings" secondary onPress={p.onOpenSettings} style={s.button}/>}{p.locationMessage ? <Text style={s.copy}>{p.locationMessage}</Text> : null}<PrimaryButton title="Refresh rider status" secondary onPress={p.onReload} style={s.button}/></View>}
+        {approved && <View style={s.quickRow}><QuickStat label="ACTIVE" value={active.length} c={c}/><QuickStat label="OFFERS" value={p.offers.length} c={c}/><QuickStat label="DELIVERIES" value={p.deliveries.length} c={c}/></View>}
+      </>}
+      {tab === 'offers' && <>
+        <Heading eyebrow="DELIVERY OPPORTUNITIES" title="Offers" body="Offers are sent to eligible riders nearby. Accept one to claim the delivery." c={c}/>
+        {!p.authorized ? <Empty title="Rider access required" body="Apply for rider access from the Go tab." c={c}/> : !approved ? <Empty title="Waiting for approval" body="Offers unlock after your rider application is approved." c={c}/> : !p.profile?.available ? <Empty title="Youâ€™re offline" body="Go online from the Go tab to receive available offers." c={c}/> : p.loading ? <ActivityIndicator style={s.loader} color={c.green}/> : p.error ? <Empty title="Offers unavailable" body={p.error} c={c}/> : p.offers.length ? p.offers.map(offer => <OfferCard key={offer.id} offer={offer} busy={p.busy === offer.id} dark={c.isDark} onAccept={p.onAccept} onReject={p.onReject}/>) : <Empty title="No offers right now" body="Weâ€™ll check again while youâ€™re online. Keep the app open to receive updates." c={c}/>}
+        {approved && p.profile?.available && <PrimaryButton title="Refresh offers" secondary onPress={p.onReload} style={s.button}/>}
+      </>}
+      {tab === 'deliveries' && <>
+        <Heading eyebrow="YOUR ROUTE" title="Deliveries" body="Pickup details, drop-off instructions, and proof of delivery." c={c}/>
+        {!approved ? <Empty title="Deliveries will appear here" body="An approved rider account is needed to start deliveries." c={c}/> : p.loading && !p.deliveries.length ? <ActivityIndicator style={s.loader} color={c.green}/> : p.deliveries.length ? p.deliveries.map(delivery => <View key={delivery.id} style={s.card}><View style={s.row}><Text style={s.cardTitle}>Delivery {delivery.id.slice(-8)}</Text><Text style={s.pillText}>{delivery.status.replaceAll('_', ' ')}</Text></View><Text style={s.detailTitle}>{delivery.order.vendor.name}</Text><Text style={s.copy}>PICK UP Â· {delivery.order.vendor.address}</Text><Text style={s.copy}>DROP OFF Â· {delivery.order.address ? `${delivery.order.address.line1}, ${delivery.order.address.city}` : 'Address unavailable'}</Text><Text style={s.copy}>{delivery.order.items.map(item => `${item.quantity} Ã— ${item.nameSnapshot}`).join(' Â· ')}</Text>{(delivery.status === 'ASSIGNED' || delivery.status === 'PICKED_UP') && <DeliveryMap delivery={delivery} token={p.token} colors={c}/>} {delivery.status === 'ASSIGNED' ? <><Text style={s.copy}>Ask the vendor for the pickup code, then enter it here to confirm you have the package.</Text><FormField label="Vendor pickup code" value={p.pickupCodes[delivery.id] ?? ''} onChangeText={value => p.onPickupCode(delivery.id, value.replace(/\D/g, '').slice(0, 6))} placeholder="6 digit pickup code" keyboardType="number-pad" dark={c.isDark}/><PrimaryButton title={p.busy === delivery.id ? 'Verifying pickup…' : 'Verify code & collect'} disabled={p.busy === delivery.id || !/^\d{6}$/.test(p.pickupCodes[delivery.id] ?? '')} onPress={() => p.onPickup(delivery, p.pickupCodes[delivery.id] ?? '')} style={s.button}/></> : delivery.status === 'PICKED_UP' ? <><Text style={s.copy}>Ask the customer for their delivery code at handoff.</Text><FormField label="Customer delivery code" value={p.completionCodes[delivery.id] ?? ''} onChangeText={value => p.onCode(delivery.id, value.replace(/\D/g, '').slice(0, 6))} placeholder="6 digit delivery code" keyboardType="number-pad" dark={c.isDark}/><PrimaryButton title={p.busy === delivery.id ? 'Verifying…' : 'Verify code & complete'} disabled={p.busy === delivery.id || !/^\d{6}$/.test(p.completionCodes[delivery.id] ?? '')} onPress={() => p.onComplete(delivery)} style={s.button}/></> : null}</View>) : <Empty title="No deliveries yet" body="Your accepted deliveries will appear here." c={c}/>}
+      </>}
+      {tab === 'account' && <>
+        <Heading eyebrow="RIDER ACCOUNT" title="Your profile" body="Your rider status and service details." c={c}/>
+        <View style={s.card}><Info label="Application" value={status.replaceAll('_', ' ')} c={c}/><Info label="Vehicle" value={p.profile?.vehicleType ?? (p.vehicleType || 'Not set')} c={c}/><Info label="Service area" value={p.profile?.serviceArea ?? (p.serviceArea || 'Not set')} c={c}/><Info label="Availability" value={p.profile?.available ? 'Online' : 'Offline'} c={c}/><Info label="Location" value={p.locationSharing ? 'Sharing while app is open' : 'Not sharing'} c={c}/></View>
+        {approved && !p.locationSharing && <PrimaryButton title="Share foreground location" secondary onPress={p.onShareLocation} style={s.button}/>}
+        <PrimaryButton title="Sign out" secondary onPress={p.onSignOut} style={s.button}/>
+      </>}
+    </ScrollView>
+    <RoleTabBar role="RIDER" active={tab} onSelect={value => setTab(value as RiderTab)} colors={c}/>
+  </View>;
+}
+
+function Heading({ eyebrow, title, body, c }: { eyebrow: string; title: string; body: string; c: AppColors }) { return <View style={{ marginBottom: 8 }}><Text style={{ color: c.green, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 }}>{eyebrow}</Text><Text style={{ color: c.ink, fontSize: 30, fontWeight: '900', marginTop: 6 }}>{title}</Text><Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, marginTop: 5 }}>{body}</Text></View>; }
+function Empty({ title, body, c }: { title: string; body: string; c: AppColors }) { return <View style={{ padding: 18, borderRadius: 16, backgroundColor: c.cream, marginTop: 10 }}><Text style={{ color: c.ink, fontWeight: '800', fontSize: 16 }}>{title}</Text><Text style={{ color: c.muted, fontSize: 12, lineHeight: 19, marginTop: 5 }}>{body}</Text></View>; }
+function Info({ label, value, c }: { label: string; value: string; c: AppColors }) { return <View style={{ paddingVertical: 9, borderBottomWidth: 1, borderColor: c.line }}><Text style={{ color: c.muted, fontSize: 11 }}>{label}</Text><Text style={{ color: c.ink, fontSize: 15, fontWeight: '700', marginTop: 3 }}>{value}</Text></View>; }
+function QuickStat({ label, value, c }: { label: string; value: number; c: AppColors }) { return <View style={{ flex: 1, alignItems: 'center', padding: 12, borderRadius: 14, backgroundColor: c.card }}><Text style={{ color: c.ink, fontSize: 23, fontWeight: '900' }}>{value}</Text><Text style={{ color: c.muted, fontSize: 10, fontWeight: '800' }}>{label}</Text></View>; }
+const styles = (c: AppColors) => StyleSheet.create({ flex: { flex: 1 }, content: { padding: 16, gap: 12, paddingBottom: 24 }, hero: { minHeight: 150, padding: 19, borderRadius: 22, backgroundColor: c.isDark ? '#194c3a' : c.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, heroCopy: { flex: 1 }, eyebrow: { color: c.lime, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 }, heroTitle: { color: 'white', fontSize: 29, fontWeight: '900', marginTop: 8 }, heroLead: { color: '#e4ebdc', fontSize: 12, marginTop: 6 }, orbit: { width: 62, height: 62, borderRadius: 31, backgroundColor: 'rgba(213,239,129,.17)', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }, orbitIcon: { color: c.lime, fontSize: 38, fontWeight: '900' }, card: { padding: 15, borderRadius: 17, borderColor: c.line, borderWidth: 1, backgroundColor: c.card, gap: 9 }, cardTitle: { color: c.ink, fontSize: 16, fontWeight: '900' }, copy: { color: c.muted, fontSize: 12, lineHeight: 19 }, row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pill: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 12, backgroundColor: c.cream }, pillActive: { backgroundColor: c.isDark ? '#263923' : '#e9f3d7' }, pillText: { color: c.green, fontSize: 10, fontWeight: '900' }, button: { marginTop: 3 }, quickRow: { flexDirection: 'row', gap: 9 }, terms: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }, check: { color: c.green, fontSize: 24 }, detailTitle: { color: c.ink, fontSize: 15, fontWeight: '800' }, loader: { margin: 28 }, error: { color: '#a44232', fontSize: 12 }, notice: { color: c.green, fontSize: 12, paddingHorizontal: 2 } });
+
+
+

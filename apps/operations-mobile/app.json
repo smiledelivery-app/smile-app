@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Smile Operations",
+    "slug": "smile-operations",
+    "scheme": "smile-ops",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-secure-store", ["expo-location", { "locationWhenInUsePermission": "Smile uses your location while you are online or completing an assigned delivery." }]],
+    "ios": { "supportsTablet": true, "bundleIdentifier": "ng.smile.operations" },
+    "android": { "package": "ng.smile.operations", "adaptiveIcon": { "backgroundColor": "#194c3a" } }
+  }
+}

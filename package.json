@@ -1,0 +1,21 @@
+{
+  "name": "makanza-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.4",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c green,blue \"npm run dev -w @makanza/api\" \"npm run dev -w @makanza/web\"",
+    "build": "npm run build -w @makanza/api && npm run build -w @makanza/web",
+    "typecheck": "npm run typecheck -w @makanza/api && npm run typecheck -w @makanza/web && pnpm run mobile:typecheck",
+    "test": "npm run test -w @makanza/api",
+    "mobile:customer": "pnpm --filter @makanza/customer-mobile start",
+    "mobile:ops": "pnpm --filter @makanza/operations-mobile start",
+    "mobile:typecheck": "pnpm --filter @makanza/customer-mobile typecheck && pnpm --filter @makanza/operations-mobile typecheck",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed:demo": "tsx prisma/seed.ts"
+  },
+  "devDependencies": { "@prisma/client": "^6.5.0", "concurrently": "^9.1.2", "dotenv": "^16.4.7", "prisma": "^6.5.0", "tsx": "^4.19.3", "typescript": "^5.8.2" }
+}

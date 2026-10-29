@@ -1,0 +1,11 @@
+node_modules/
+.next/
+dist/
+coverage/
+.turbo/
+.expo/
+web-build/
+.env
+.env.*
+!.env.example
+*.log

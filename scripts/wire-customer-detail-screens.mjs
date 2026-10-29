@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const path='apps/customer-mobile/src/navigation/CustomerNavigator.tsx';let s=fs.readFileSync(path,'utf8');
+s=s.replace("import type { CustomerScreen } from './types';","import type { CustomerScreen } from './types';\nimport VendorMenuScreen from '../screens/VendorMenuScreen';\nimport CartScreen from '../screens/CartScreen';\nimport type { CartLine } from '../types/cart';");
+s=s.replace("type CartLine={product:Product;quantity:number;vendorId:string;vendorName:string};\n",'');
+const menuStart=s.indexOf("    {screen==='menu'&&");const bagStart=s.indexOf("\n    {screen==='bag'&&",menuStart);
+if(menuStart<0||bagStart<0)throw new Error('Could not locate kitchen detail screen.');
+s=s.slice(0,menuStart)+`    {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading} error={error} dark={isDark} onBack={()=>setScreen('home')} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add}/>} `+s.slice(bagStart);
+const cartStart=s.indexOf("\n    {screen==='bag'&&");const ordersStart=s.indexOf("\n    {screen==='orders'&&",cartStart);
+if(cartStart<0||ordersStart<0)throw new Error('Could not locate customer cart screen.');
+s=s.slice(0,cartStart)+`\n    {screen==='bag'&&<CartScreen lines={cart} subtotal={subtotal} address={address} city={city} busy={busy} error={error} hasAccount={!!session} dark={isDark} onAddress={setAddress} onCity={setCity} onQuantity={(productId,delta)=>setCart(lines=>lines.flatMap(line=>line.product.id===productId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onBrowse={()=>setScreen('home')} onSignIn={()=>setScreen('profile')}/>} `+s.slice(ordersStart);
+fs.writeFileSync(path,s);

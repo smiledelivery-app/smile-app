@@ -1,0 +1,7 @@
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { CustomerTab } from '../navigation/types';
+
+const tabs:{key:CustomerTab;label:string;icon:'home-outline'|'search-outline'|'receipt-outline'|'wallet-outline'|'person-outline'}[]=[{key:'home',label:'Home',icon:'home-outline'},{key:'search',label:'Search',icon:'search-outline'},{key:'orders',label:'Orders',icon:'receipt-outline'},{key:'wallet',label:'Wallet',icon:'wallet-outline'},{key:'profile',label:'Profile',icon:'person-outline'}];
+export default function TabBar({active,dark,onChange}:{active:CustomerTab;dark:boolean;onChange:(tab:CustomerTab)=>void}){return <View style={[s.bar,dark&&s.barDark]}>{tabs.map(tab=><Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{selected:active===tab.key}} onPress={()=>onChange(tab.key)} style={s.item}><Ionicons name={tab.icon} size={25} color={active===tab.key?'#194c3a':'#98a096'}/><Text style={[s.label,active===tab.key&&s.active]}>{tab.label}</Text></Pressable>)}</View>}
+const s=StyleSheet.create({bar:{height:64,borderTopWidth:1,borderTopColor:'#e8ebe2',backgroundColor:'#fffef9',flexDirection:'row',alignItems:'center',justifyContent:'space-around',paddingBottom:3},barDark:{backgroundColor:'#0e1711',borderTopColor:'#2a382f'},item:{flex:1,alignItems:'center',justifyContent:'center',gap:3},label:{fontSize:11,color:'#98a096',fontWeight:'600'},active:{color:'#194c3a',fontWeight:'900'}});

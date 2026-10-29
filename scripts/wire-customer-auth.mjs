@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+const path='apps/customer-mobile/src/navigation/CustomerNavigator.tsx';
+let s=fs.readFileSync(path,'utf8');
+s=s.replace("import ProfileScreen from '../tabs/ProfileScreen';","import ProfileScreen from '../tabs/ProfileScreen';\nimport AuthNavigator from '../auth/AuthNavigator';");
+const a=s.indexOf('  const signIn=async(');const b=s.indexOf('\n  const add=',a);
+if(a<0||b<0)throw new Error('Could not locate customer authentication handler.');
+s=s.slice(0,a)+`  const signIn=async(authMode:'login'|'register',emailValue:string,passwordValue:string,nameValue='')=>{setBusy(true);setError('');try{const result=await api.post<Session>('/auth/'+(authMode==='register'?'register':'login'),authMode==='register'?{name:nameValue,email:emailValue,password:passwordValue}:{email:emailValue,password:passwordValue});if(!result.user.roles.includes('CUSTOMER'))throw new Error('This account does not have customer access.');await SecureStore.setItemAsync('makanza-session',JSON.stringify(result));setSession(result);setGuestMode(false);setPassword('');setNotice('You are signed in.');}catch(e){setError(e instanceof Error?e.message:'Could not sign in.');}finally{setBusy(false);}};`+s.slice(b);
+const auth=`<AuthNavigator dark={isDark} busy={busy} loginError={error} signupError={error} onLogin={(email,password)=>void signIn('login',email,password)} onSignup={(name,email,password)=>void signIn('register',email,password,name)} onGuest={()=>setGuestMode(true)} onTheme={toggleTheme}/>`;
+const gateStart=s.indexOf('  if(!session&&!guestMode)');const gateEnd=s.indexOf('\n\n  return <SafeAreaView',gateStart);
+if(gateStart<0||gateEnd<0)throw new Error('Could not locate customer auth entry gate.');
+s=s.slice(0,gateStart)+`  if(!session&&!guestMode)return ${auth};`+s.slice(gateEnd);
+const profileStart=s.indexOf("    {screen==='profile'&&");const barStart=s.indexOf("\n    {(['home','search','orders','wallet','profile']",profileStart);
+if(profileStart<0||barStart<0)throw new Error('Could not locate customer profile tab.');
+s=s.slice(0,profileStart)+`    {screen==='profile'&&(session?<ProfileScreen session={session} dark={isDark} onSignOut={()=>void signOut()} onTheme={toggleTheme}/>:${auth})}`+s.slice(barStart);
+fs.writeFileSync(path,s);

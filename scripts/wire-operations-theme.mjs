@@ -1,0 +1,26 @@
+import fs from 'node:fs';
+const path='apps/operations-mobile/src/navigation/OperationsNavigator.tsx';let s=fs.readFileSync(path,'utf8');
+s=s.replace("import { ApiError, createApiClient, type RiderDelivery, type RiderOffer, type RiderProfile, type Session, type VendorOrder } from '@makanza/mobile-core';","import { ApiError, type RiderDelivery, type RiderOffer, type RiderProfile, type Session, type VendorOrder } from '@makanza/mobile-core';\nimport { api } from '../services/api';\nimport { formatMoney as money } from '../utils/format';");
+s=s.replace("const api=createApiClient(process.env.EXPO_PUBLIC_API_URL??'');\n",'');
+s=s.replace("const c={ink:'#192b23',green:'#194c3a',lime:'#d5ef81',cream:'#f7f7ef',paper:'#fffef9',muted:'#79817a',orange:'#e87c59',line:'#e8ebe2'};\n", "const lightColors={ink:'#192b23',green:'#194c3a',lime:'#d5ef81',cream:'#f7f7ef',paper:'#fffef9',card:'#ffffff',muted:'#79817a',orange:'#e87c59',line:'#e8ebe2',isDark:false};\nconst darkColors={ink:'#edf3e9',green:'#d5ef81',lime:'#d5ef81',cream:'#142019',paper:'#0e1711',card:'#18251c',muted:'#aab4a8',orange:'#ff9c79',line:'#2a382f',isDark:true};\n");
+s=s.replace("const money=(minor:number)=>`₦${(minor/100).toLocaleString('en-NG',{maximumFractionDigits:0})}`;\n",'');
+s=s.replace("  const [session,setSession]=useState<Session|null>(null);","  const [session,setSession]=useState<Session|null>(null);\n  const [colorMode,setColorMode]=useState<'light'|'dark'>('light');");
+s=s.replace("  const token=session?.token;","  const c=colorMode==='dark'?darkColors:lightColors;\n  const s=createStyles(c);\n  const isDark=colorMode==='dark';\n  const toggleTheme=()=>{const next=isDark?'light':'dark';setColorMode(next);void SecureStore.setItemAsync('makanza-operations-theme-v1',next).catch(()=>undefined);};\n  const token=session?.token;");
+s=s.replace("  useEffect(()=>{SecureStore.getItemAsync('makanza-operations-onboarding-v1')","  useEffect(()=>{SecureStore.getItemAsync('makanza-operations-theme-v1').then(value=>{if(value==='dark'||value==='light')setColorMode(value);}).catch(()=>undefined);},[]);\n  useEffect(()=>{SecureStore.getItemAsync('makanza-operations-onboarding-v1')");
+s=s.replace('<StatusBar barStyle="dark-content" backgroundColor={c.cream}/>','<StatusBar barStyle={isDark?\'light-content\':\'dark-content\'} backgroundColor={c.paper}/>');
+s=s.replace('<SignInScreen email=','<SignInScreen dark={isDark} email=');
+s=s.replace('<View style={s.header}><Text style={s.brand}>','<View style={s.header}><Text style={s.brand}>');
+s=s.replace("<Text style={s.ops}>OPS</Text></Text>{session&&<Pressable accessibilityRole=\"button\" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}</View>","<Text style={s.ops}>OPS</Text></Text><View style={s.headerActions}><Pressable accessibilityRole=\"button\" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Text style={s.themeText}>{isDark?'Light':'Dark'}</Text></Pressable>{session&&<Pressable accessibilityRole=\"button\" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}</View></View>");
+s=s.replace('const s=StyleSheet.create({','const createStyles=(c:typeof lightColors|typeof darkColors)=>StyleSheet.create({');
+s=s.replace("backgroundColor:'white'","backgroundColor:c.card").replace("color:'#69766a'","color:c.muted").replace("borderColor:'#e8ebe2'","borderColor:c.line");
+s=s.replace("safe:{flex:1,backgroundColor:c.paper},flex:","safe:{flex:1,backgroundColor:c.paper},headerActions:{flexDirection:'row',alignItems:'center',gap:12},themeToggle:{paddingHorizontal:9,paddingVertical:7,borderRadius:12,backgroundColor:c.card},themeText:{fontSize:9,fontWeight:'800',color:c.green},flex:");
+s=s.replace("buttonText:{fontSize:11,fontWeight:'700',color:'white'}","buttonText:{fontSize:11,fontWeight:'800',color:c.isDark?'#17231b':'white'}");
+s=s.replace("header:{height:62,paddingHorizontal:18,backgroundColor:c.cream,","header:{height:62,paddingHorizontal:18,backgroundColor:c.cream,borderBottomWidth:1,borderBottomColor:c.line,");
+fs.writeFileSync(path,s);
+
+const onboardingPath='apps/operations-mobile/src/theme/onboarding.ts';let onboarding=fs.readFileSync(onboardingPath,'utf8');
+onboarding=onboarding.replace("safe:{flex:1,backgroundColor:'#f6f7ef'},top:{","safe:{flex:1,backgroundColor:'#f6f7ef'},safeDark:{backgroundColor:'#0e1711'},topActions:{flexDirection:'row',alignItems:'center',gap:9},top:{");
+onboarding=onboarding.replace("backgroundColor:'#e9efdc',alignItems:'center'","backgroundColor:'#e9efdc',alignItems:'center'").replace("overflow:'hidden'},orbitLarge:","overflow:'hidden'},artDark:{backgroundColor:'#18251c'},orbitDark:{borderColor:'#344333'},overflow:'hidden'},orbitLarge:");
+onboarding=onboarding.replace("artDark:{backgroundColor:'#18251c'},orbitDark:{borderColor:'#344333'},overflow:'hidden'},orbitLarge:","artDark:{backgroundColor:'#18251c'},orbitDark:{borderColor:'#344333'},orbitLarge:");
+onboarding=onboarding.replace("nextText:{fontSize:12,fontWeight:'900',color:'white'}","nextText:{fontSize:12,fontWeight:'900',color:'white'},textDark:{color:'#edf3e9'},mutedDark:{color:'#aab4a8'}");
+fs.writeFileSync(onboardingPath,onboarding);
