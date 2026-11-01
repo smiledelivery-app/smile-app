@@ -4,7 +4,7 @@ import {
   Eye, EyeOff, House, Info, Languages, LockKeyhole, LogIn, LogOut,
   Mail, Map, MapPin, Moon, Navigation, Pencil, Phone, Plus, ReceiptText,
   RefreshCw, Search, Settings, ShieldCheck, ShoppingBag, Store, Sun, Trash2,
-  TriangleAlert, Utensils, WalletCards, X, Zap, CircleDot, type LucideIcon,
+  TriangleAlert, Utensils, WalletCards, X, Zap, CircleDot, MessageCircle, type LucideIcon,
 } from 'lucide-react-native';
 
 type Props={name:string;size?:number;color?:string;strokeWidth?:number};
@@ -20,7 +20,7 @@ const icons:Record<string,LucideIcon>={
   'shield-checkmark-outline':ShieldCheck,'trash-outline':Trash2,'eye-outline':Eye,'eye-off-outline':EyeOff,
   'refresh-outline':RefreshCw,'restaurant-outline':Utensils,'language-outline':Languages,
   'bag-handle-outline':ShoppingBag,'checkmark':Check,'checkmark-circle-outline':CircleCheckBig,
-  'alert-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,
+  'alert-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,'logo-whatsapp':MessageCircle,
 };
 
 export function AppIcon({name,size=24,color,strokeWidth=2.2}:Props){const Icon=icons[name]??CircleDot;return <Icon size={size} color={color} strokeWidth={strokeWidth}/>;}

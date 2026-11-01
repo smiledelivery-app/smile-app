@@ -6,6 +6,7 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "androidStatusBar": { "barStyle": "dark-content", "backgroundColor": "#ffffff", "translucent": false },
     "newArchEnabled": true,
     "plugins": ["expo-secure-store", ["expo-location", { "locationWhenInUsePermission": "Smile uses your location while you are online or completing an assigned delivery." }], ["expo-image-picker", { "photosPermission": "Smile lets you choose a store logo and cover image." }]],
     "ios": { "supportsTablet": true, "bundleIdentifier": "ng.smile.operations" },

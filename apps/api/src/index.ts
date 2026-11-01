@@ -307,7 +307,7 @@ app.post('/api/v1/auth/register/verify',async(req,res,next)=>{
   try{
     const pending=await prisma.pendingPhoneSignup.findUnique({where:{phone}});
     if(!pending||pending.expiresAt.getTime()<=Date.now()){if(pending)await prisma.pendingPhoneSignup.deleteMany({where:{id:pending.id}});return res.status(410).json({error:{code:'SIGNUP_EXPIRED',message:'This signup has expired. Start again to request a new code.'}});}
-    if(!await checkPhoneVerification(pending.providerPinId??'',input.data.code))return res.status(400).json({error:{code:'VERIFICATION_CODE_INCORRECT',message:'That code is incorrect or expired. Check it and try again.'}});
+    if(!await checkPhoneVerification(pending.providerPinId??'',phone,input.data.code))return res.status(400).json({error:{code:'VERIFICATION_CODE_INCORRECT',message:'That code is incorrect or expired. Check it and try again.'}});
     const result=await prisma.$transaction(async(tx)=>{
       const existing=await tx.user.findFirst({where:{OR:[{email:pending.email},{phone:pending.phone}]},select:{id:true}});
       if(existing)throw new Error('ACCOUNT_EXISTS');

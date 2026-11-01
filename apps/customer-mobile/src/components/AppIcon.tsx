@@ -68,7 +68,7 @@ const icons:Record<string,LucideIcon>={
   'bag-handle-outline':ShoppingBag,'time-outline':Clock3,'navigate-outline':Navigation,'bicycle-outline':Bike,
   'cart-outline':ShoppingCart,
   star:Star,checkmark:Check,'checkmark-circle-outline':CircleCheckBig,'alert-circle-outline':CircleAlert,'information-circle-outline':Info,'file-tray-outline':Inbox,
-  'mail-outline':Mail,'chatbubble-outline':MessageCircle,'shield-checkmark-outline':ShieldCheck,'trash-outline':Trash2,'eye-outline':Eye,'eye-off-outline':EyeOff,
+  'mail-outline':Mail,'chatbubble-outline':MessageCircle,'logo-whatsapp':MessageCircle,'shield-checkmark-outline':ShieldCheck,'trash-outline':Trash2,'eye-outline':Eye,'eye-off-outline':EyeOff,
   'lock-closed-outline':LockKeyhole,'settings-outline':Settings,'help-circle-outline':CircleHelp,
   'home-outline':House,'apps-outline':Grid2X2,'medkit-outline':Pill,'basket-outline':ShoppingBasket,'account-outline':UserRound,'clipboard-list-outline':ClipboardList,'card-outline':CreditCard,
   'bag-check-outline':BadgeCheck,'storefront-outline':Store,

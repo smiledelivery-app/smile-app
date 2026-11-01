@@ -1,6 +1,6 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { ImageBackground, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { Image, ImageBackground, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '../components/AppIcon';
 import { onboardingStyles as s } from '../theme/onboarding';
@@ -19,7 +19,7 @@ export default function OnboardingScreen({onSelectRole,onComplete,dark,onTheme}:
     <ImageBackground source={{uri:slide.image}} style={styles.image} imageStyle={styles.imageRadius}>
       <View style={styles.shade}/>
       <View style={styles.top}>
-        <Text style={styles.brand}><Text style={styles.brandMark}>m</Text> smile <Text style={styles.ops}>OPS</Text></Text>
+        <View style={styles.brand}><Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={styles.logo}/><Text style={styles.brandName}>smile <Text style={styles.ops}>OPS</Text></Text></View>
         <View style={styles.actionsTop}>
           <Pressable accessibilityRole="button" accessibilityLabel={dark?'Switch to light mode':'Switch to dark mode'} onPress={onTheme} style={styles.theme}><Ionicons name={dark?'sunny-outline':'moon-outline'} size={21} color="white"/></Pressable>
           <Pressable accessibilityRole="button" onPress={onComplete} hitSlop={12}><Text style={styles.skip}>Skip</Text></Pressable>
@@ -44,7 +44,7 @@ export default function OnboardingScreen({onSelectRole,onComplete,dark,onTheme}:
 
 const styles=StyleSheet.create({
   image:{flex:1,justifyContent:'space-between',backgroundColor:'#194c3a'},imageRadius:{},shade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(13,38,27,.38)'},
-  top:{height:62,paddingHorizontal:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},brand:{fontSize:22,fontWeight:'900',letterSpacing:-.5,color:'white'},brandMark:{fontFamily:'serif',color:'#d5ef81'},ops:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:'#d5ef81'},actionsTop:{flexDirection:'row',alignItems:'center',gap:12},theme:{width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(255,255,255,.18)'},skip:{fontSize:13,fontWeight:'800',color:'white',padding:8},
+  top:{height:62,paddingHorizontal:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},brand:{flexDirection:'row',alignItems:'center',gap:7},logo:{width:42,height:42},brandName:{fontSize:22,fontWeight:'900',letterSpacing:-.5,color:'white'},ops:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:'#d5ef81'},actionsTop:{flexDirection:'row',alignItems:'center',gap:12},theme:{width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(255,255,255,.18)'},skip:{fontSize:13,fontWeight:'800',color:'white',padding:8},
   photoTag:{alignSelf:'flex-start',marginLeft:22,marginTop:18,paddingHorizontal:12,paddingVertical:8,borderRadius:18,backgroundColor:'#d5ef81'},photoTagText:{fontSize:10,letterSpacing:1,fontWeight:'900',color:'#194c3a'},
   content:{paddingHorizontal:24,paddingTop:24,paddingBottom:22,backgroundColor:'rgba(255,255,255,.96)',borderTopLeftRadius:28,borderTopRightRadius:28},eyebrow:{fontSize:11,letterSpacing:1.4,fontWeight:'900',color:'#6b8155',marginBottom:9},title:{fontSize:34,lineHeight:40,fontWeight:'800',letterSpacing:-1,color:'#192b23'},body:{fontSize:15,lineHeight:22,color:'#747d73',marginTop:8},
   roleChoices:{gap:9,marginTop:2},roleCard:{minHeight:68,flexDirection:'row',alignItems:'center',gap:12,paddingHorizontal:13,paddingVertical:10,borderRadius:17,backgroundColor:'#e9f2e6',borderWidth:1,borderColor:'#d7e6d5'},roleCardRider:{backgroundColor:'#f1f3ec'},roleIcon:{width:43,height:43,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:'#d4e8d3'},riderIcon:{backgroundColor:'#dfe8d7'},roleCopy:{flex:1},roleTitle:{fontSize:14,fontWeight:'900',color:'#194c3a'},roleBody:{fontSize:11,color:'#65746a',marginTop:3},
