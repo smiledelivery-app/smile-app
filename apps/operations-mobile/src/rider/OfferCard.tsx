@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { Pressable, StyleSheet, View } from 'react-native';
 import type { RiderOffer } from '@makanza/mobile-core';
 
 type Props={offer:RiderOffer;busy:boolean;dark:boolean;onAccept:(offer:RiderOffer)=>void;onReject:(offer:RiderOffer)=>void};

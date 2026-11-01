@@ -1,6 +1,8 @@
+import { AppTextInput as TextInput } from '@makanza/mobile-ui';
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
 import type { Session, Vendor } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { api } from '../services/api';
@@ -55,7 +57,7 @@ export function FavoritesScreen({colors,vendors,favoriteIds,onBack,onOpen,onTogg
         <Ionicons name="chevron-forward" size={22} color={colors.muted}/>
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${vendor.name} from favourites`} onPress={()=>onToggle(vendor.id)} style={s.heart}>
-        <Ionicons name="heart" size={23} color={colors.orange}/>
+        <Ionicons name="heart" size={23} color={colors.accent}/>
       </Pressable>
     </View>):<View style={s.empty}><Ionicons name="heart-outline" size={36} color={colors.green}/><Text style={s.rowTitle}>No favourites yet</Text><Text style={s.body}>Save kitchens you love and they’ll show up here.</Text></View>}
   </ScrollView>;

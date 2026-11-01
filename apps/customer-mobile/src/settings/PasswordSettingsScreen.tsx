@@ -1,6 +1,8 @@
-﻿import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppTextInput as TextInput } from '@makanza/mobile-ui';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
 

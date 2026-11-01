@@ -11,12 +11,15 @@ import { catalogSource } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from './google-maps.js';
 import { createProofCode } from './proof-codes.js';
+import { createVendorImageUploadSignature, MediaProviderError } from './media.js';
 import { PaystackError, assignTitanDva, createPaystackCustomer, initializePaystackTransaction, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
+import { checkPhoneVerification, PhoneVerificationError, sendPhoneVerification, type PhoneVerificationChannel } from './phone-verification.js';
 
 const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.API_PORT ?? 4100);
 const demoMode = process.env.DEMO_MODE === 'true' && process.env.NODE_ENV !== 'production';
+const phoneVerificationBypass = process.env.PHONE_VERIFICATION_BYPASS === 'true' && process.env.NODE_ENV !== 'production';
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000', credentials: true }));
@@ -26,6 +29,13 @@ type AuthRequest = Request & { auth?: { userId: string; roles: Role[] } };
 type RawRequest = Request & { rawBody?:Buffer };
 const emailSchema = z.string().trim().email().max(254).transform(v => v.toLowerCase());
 const passSchema = z.string().min(10).max(128);
+const phoneNumber = (raw:string) => {
+  let value=raw.trim().replace(/[\s().-]/g,'');
+  if(value.startsWith('00'))value=`+${value.slice(2)}`;
+  if(/^0\d{10}$/.test(value))value=`+234${value.slice(1)}`;
+  else if(/^234\d{8,13}$/.test(value))value=`+${value}`;
+  return /^\+[1-9]\d{7,14}$/.test(value)?value:null;
+};
 const tokenHash = (token:string) => createHash('sha256').update(token).digest('hex');
 const deliveryProofSecret = () => process.env.DELIVERY_OTP_SECRET??(process.env.NODE_ENV==='production'?undefined:process.env.JWT_ACCESS_SECRET);
 const googleRoutesKey = () => process.env.GOOGLE_MAPS_ROUTES_API_KEY ?? process.env.MAPS_API_KEY ?? '';
@@ -239,18 +249,80 @@ app.delete('/api/v1/addresses/:addressId',requireUser,async(req:AuthRequest,res,
 });
 
 app.post('/api/v1/auth/register', async (req,res,next) => {
-  const input = z.object({name:z.string().trim().min(2).max(100),email:emailSchema,password:passSchema}).safeParse(req.body);
-  if(!input.success) return res.status(400).json({error:{code:'INVALID_INPUT',message:'Provide your name, a valid email, and a password of at least 10 characters.'}});
+  const input = z.object({name:z.string().trim().min(2).max(100),email:emailSchema,password:passSchema,phone:z.string().trim().min(8).max(24),channel:z.enum(['sms','whatsapp'])}).safeParse(req.body);
+  if(!input.success) return res.status(400).json({error:{code:'INVALID_INPUT',message:'Provide your name, email, phone number, password, and SMS or WhatsApp delivery choice.'}});
+  const phone=phoneNumber(input.data.phone);
+  if(!phone)return res.status(400).json({error:{code:'INVALID_PHONE',message:'Enter a valid phone number with a country code, such as +2348012345678.'}});
   try {
-    const passwordHash = await makePasswordHash(input.data.password);
-    const user = await prisma.user.create({data:{name:input.data.name,email:input.data.email,passwordHash,roles:[Role.CUSTOMER],wallet:{create:{dvaStatus:'PENDING'}}}});
-    const token = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now()+30*24*60*60_000);
-    await prisma.session.create({data:{userId:user.id,tokenHash:tokenHash(token),expiresAt}});
-    void provisionDva(user.id);
-    return res.status(201).json({data:{token,expiresAt,user:{id:user.id,name:user.name,email:user.email,phone:user.phone,roles:user.roles}}});
+    await prisma.pendingPhoneSignup.deleteMany({where:{expiresAt:{lt:new Date()}}});
+    const existingUser=await prisma.user.findFirst({where:{OR:[{email:input.data.email},{phone}]},select:{id:true}});
+    if(existingUser)return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
+    if(phoneVerificationBypass){
+      const passwordHash=await makePasswordHash(input.data.password);
+      const result=await prisma.$transaction(async(tx)=>{
+        const existing=await tx.user.findFirst({where:{OR:[{email:input.data.email},{phone}]},select:{id:true}});
+        if(existing)throw new Error('ACCOUNT_EXISTS');
+        const user=await tx.user.create({data:{name:input.data.name,email:input.data.email,phone,passwordHash,roles:[Role.CUSTOMER],isDemo:true,wallet:{create:{dvaStatus:'PENDING'}}}});
+        const token=randomBytes(32).toString('base64url');const expiresAt=new Date(Date.now()+30*24*60*60_000);
+        await tx.session.create({data:{userId:user.id,tokenHash:tokenHash(token),expiresAt}});
+        await tx.pendingPhoneSignup.deleteMany({where:{OR:[{email:input.data.email},{phone}]}});
+        return{token,expiresAt,user:{id:user.id,name:user.name,email:user.email,phone:user.phone,roles:user.roles}};
+      });
+      return res.status(201).json({data:result});
+    }
+    const existingPending=await prisma.pendingPhoneSignup.findFirst({where:{OR:[{email:input.data.email},{phone}]}});
+    if(existingPending&&Date.now()-existingPending.lastSentAt.getTime()<60_000)return res.status(429).json({error:{code:'VERIFICATION_WAIT',message:'Wait one minute before requesting another verification code.'}});
+    if(existingPending)await prisma.pendingPhoneSignup.delete({where:{id:existingPending.id}});
+    const passwordHash=await makePasswordHash(input.data.password);
+    const pending=await prisma.pendingPhoneSignup.create({data:{name:input.data.name,email:input.data.email,phone,passwordHash,channel:input.data.channel,expiresAt:new Date(Date.now()+15*60_000)}});
+    try{const providerPinId=await sendPhoneVerification(phone,input.data.channel as PhoneVerificationChannel);await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{providerPinId}});}
+    catch(error){await prisma.pendingPhoneSignup.deleteMany({where:{id:pending.id}});throw error;}
+    return res.status(202).json({data:{phone,channel:input.data.channel,expiresAt:pending.expiresAt}});
   } catch(error) {
-    if(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email.'}});
+    if(error instanceof Error&&error.message==='ACCOUNT_EXISTS')return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
+    if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{code:error.status===503?'PHONE_VERIFICATION_UNAVAILABLE':'PHONE_VERIFICATION_SEND_FAILED',message:error.message}});
+    if(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
+    return next(error);
+  }
+});
+
+app.post('/api/v1/auth/register/resend',async(req,res)=>{
+  const input=z.object({phone:z.string().trim().min(8).max(24)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PHONE',message:'Enter the phone number used for signup.'}});
+  const phone=phoneNumber(input.data.phone);if(!phone)return res.status(400).json({error:{code:'INVALID_PHONE',message:'Enter a valid phone number with a country code.'}});
+  try{
+    const pending=await prisma.pendingPhoneSignup.findUnique({where:{phone}});
+    if(!pending||pending.expiresAt.getTime()<=Date.now())return res.status(410).json({error:{code:'SIGNUP_EXPIRED',message:'This signup has expired. Start again to request a new code.'}});
+    if(Date.now()-pending.lastSentAt.getTime()<60_000)return res.status(429).json({error:{code:'VERIFICATION_WAIT',message:'Wait one minute before requesting another verification code.'}});
+    const providerPinId=await sendPhoneVerification(phone,pending.channel as PhoneVerificationChannel);
+    await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{lastSentAt:new Date(),providerPinId}});
+    return res.json({data:{phone,channel:pending.channel,expiresAt:pending.expiresAt}});
+  }catch(error){if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{code:'PHONE_VERIFICATION_SEND_FAILED',message:error.message}});return res.status(500).json({error:{code:'PHONE_VERIFICATION_SEND_FAILED',message:'Could not send a verification code. Try again.'}});}
+});
+
+app.post('/api/v1/auth/register/verify',async(req,res,next)=>{
+  const input=z.object({phone:z.string().trim().min(8).max(24),code:z.string().regex(/^\d{4,10}$/)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_VERIFICATION',message:'Enter the phone number and verification code.'}});
+  const phone=phoneNumber(input.data.phone);if(!phone)return res.status(400).json({error:{code:'INVALID_PHONE',message:'Enter a valid phone number with a country code.'}});
+  try{
+    const pending=await prisma.pendingPhoneSignup.findUnique({where:{phone}});
+    if(!pending||pending.expiresAt.getTime()<=Date.now()){if(pending)await prisma.pendingPhoneSignup.deleteMany({where:{id:pending.id}});return res.status(410).json({error:{code:'SIGNUP_EXPIRED',message:'This signup has expired. Start again to request a new code.'}});}
+    if(!await checkPhoneVerification(pending.providerPinId??'',input.data.code))return res.status(400).json({error:{code:'VERIFICATION_CODE_INCORRECT',message:'That code is incorrect or expired. Check it and try again.'}});
+    const result=await prisma.$transaction(async(tx)=>{
+      const existing=await tx.user.findFirst({where:{OR:[{email:pending.email},{phone:pending.phone}]},select:{id:true}});
+      if(existing)throw new Error('ACCOUNT_EXISTS');
+      const user=await tx.user.create({data:{name:pending.name,email:pending.email,phone:pending.phone,phoneVerifiedAt:new Date(),passwordHash:pending.passwordHash,roles:[Role.CUSTOMER],wallet:{create:{dvaStatus:'PENDING'}}}});
+      const token=randomBytes(32).toString('base64url');const expiresAt=new Date(Date.now()+30*24*60*60_000);
+      await tx.session.create({data:{userId:user.id,tokenHash:tokenHash(token),expiresAt}});
+      await tx.pendingPhoneSignup.delete({where:{id:pending.id}});
+      return{token,expiresAt,user:{id:user.id,name:user.name,email:user.email,phone:user.phone,roles:user.roles}};
+    });
+    void provisionDva(result.user.id);
+    return res.status(201).json({data:result});
+  }catch(error){
+    if(error instanceof Error&&error.message==='ACCOUNT_EXISTS')return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
+    if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
+    if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{code:'PHONE_VERIFICATION_UNAVAILABLE',message:error.message}});
     return next(error);
   }
 });
@@ -279,6 +351,9 @@ app.patch('/api/v1/auth/profile',requireUser,async(req:AuthRequest,res,next)=>{
   const input=z.object({name:z.string().trim().min(2).max(100),phone:z.string().trim().min(7).max(24).nullable()}).safeParse(req.body);
   if(!input.success)return res.status(400).json({error:{code:'INVALID_PROFILE',message:'Enter a name and a valid phone number, or leave phone blank.'}});
   try{
+    const current=await prisma.user.findUnique({where:{id:req.auth!.userId},select:{phone:true}});
+    if(!current)return res.status(404).json({error:{code:'ACCOUNT_NOT_FOUND',message:'Account not found.'}});
+    if(input.data.phone!==current.phone)return res.status(409).json({error:{code:'PHONE_VERIFICATION_REQUIRED',message:'Phone number changes must be verified before they can be saved.'}});
     const user=await prisma.user.update({where:{id:req.auth!.userId},data:{name:input.data.name,phone:input.data.phone},select:{id:true,name:true,email:true,phone:true}});
     return res.json({data:user});
   }catch(error){
@@ -319,7 +394,12 @@ app.post('/api/v1/auth/password',requireUser,async(req:AuthRequest,res,next)=>{
   }catch(error){return next(error);}
 });
 
-const onboardingInput = z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100).optional(),contactPhone:z.string().trim().min(7).max(24).optional(),description:z.string().trim().max(1000).default(''),cuisine:z.string().trim().min(2).max(80),address:z.string().trim().min(5).max(250),logoUrl:z.string().url().max(2048).nullable().optional(),coverImageUrl:z.string().url().max(2048).nullable().optional(),cacNumber:z.string().trim().max(50).nullable().optional(),cacDocumentUrl:z.string().url().max(2048).nullable().optional(),termsAccepted:z.literal(true)}).and(coordinatePair);
+app.post('/api/v1/vendor/media/sign',requireUser,(req:AuthRequest,res)=>{
+  try{return res.json({data:createVendorImageUploadSignature(req.auth!.userId)});}
+  catch(error){if(error instanceof MediaProviderError)return res.status(error.status).json({error:{code:'MEDIA_UPLOAD_UNAVAILABLE',message:error.message}});return res.status(500).json({error:{code:'MEDIA_UPLOAD_UNAVAILABLE',message:'Could not prepare the image upload.'}});}
+});
+
+const onboardingInput = z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100).optional(),contactPhone:z.string().trim().min(7).max(24).optional(),description:z.string().trim().max(1000).default(''),address:z.string().trim().min(5).max(250),logoUrl:z.string().url().max(2048).nullable().optional(),coverImageUrl:z.string().url().max(2048).nullable().optional(),cacNumber:z.string().trim().max(50).nullable().optional(),cacDocumentUrl:z.string().url().max(2048).nullable().optional(),termsAccepted:z.literal(true)}).and(coordinatePair);
 app.post('/api/v1/vendors/onboarding',requireUser,async (req:AuthRequest,res,next) => {
   const input=onboardingInput.safeParse(req.body);
   if(!input.success) return res.status(400).json({error:{code:'INVALID_APPLICATION',message:'Complete the business details and accept the platform terms.'}});
@@ -335,7 +415,7 @@ app.post('/api/v1/vendors/onboarding',requireUser,async (req:AuthRequest,res,nex
     const vendor=await prisma.$transaction(async tx=>{
       const user=await tx.user.findUniqueOrThrow({where:{id:req.auth!.userId}});
       await tx.user.update({where:{id:user.id},data:{name:input.data.ownerName??user.name,...(input.data.contactPhone?{phone:input.data.contactPhone}:{}),roles:user.roles.includes(Role.VENDOR)?user.roles:[...user.roles,Role.VENDOR]}});
-      return tx.vendor.create({data:{ownerId:user.id,name:input.data.name,description:input.data.description,cuisine:input.data.cuisine,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,slug,status:VendorStatus.PENDING_REVIEW,isOpen:false,termsAcceptedAt:new Date()}});
+      return tx.vendor.create({data:{ownerId:user.id,name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,slug,status:VendorStatus.PENDING_REVIEW,isOpen:false,isDemo:user.isDemo,termsAcceptedAt:new Date()}});
     });
     return res.status(201).json({data:{id:vendor.id,name:vendor.name,status:vendor.status}});
   } catch(error) {
@@ -348,14 +428,14 @@ app.get('/api/v1/vendor/profile',requireUser,requireRole(Role.VENDOR),async (req
   try { const data=await prisma.vendor.findUnique({where:{ownerId:req.auth!.userId},include:{owner:{select:{name:true}}}}); if(!data)return res.status(404).json({error:{code:'VENDOR_PROFILE_NOT_FOUND',message:'No vendor application is linked to this account.'}});return res.json({data:{...data,ownerName:data.owner.name,owner:undefined}}); }
   catch(error){return next(error);}
 });
-const vendorProfileInput=z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100),contactPhone:z.string().trim().min(7).max(24),description:z.string().trim().max(1000),cuisine:z.string().trim().min(2).max(80),address:z.string().trim().min(5).max(250),logoUrl:z.string().url().max(2048).nullable(),coverImageUrl:z.string().url().max(2048).nullable(),cacNumber:z.string().trim().max(50).nullable(),cacDocumentUrl:z.string().url().max(2048).nullable()}).and(coordinatePair);
+const vendorProfileInput=z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100),contactPhone:z.string().trim().min(7).max(24),description:z.string().trim().max(1000),address:z.string().trim().min(5).max(250),logoUrl:z.string().url().max(2048).nullable(),coverImageUrl:z.string().url().max(2048).nullable(),cacNumber:z.string().trim().max(50).nullable(),cacDocumentUrl:z.string().url().max(2048).nullable()}).and(coordinatePair);
 app.put('/api/v1/vendor/profile',requireUser,requireRole(Role.VENDOR),async(req:AuthRequest,res,next)=>{
   const input=vendorProfileInput.safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_VENDOR_PROFILE',message:'Check the owner, store, address, and document details.'}});
   try{
     const vendor=await prisma.vendor.findUnique({where:{ownerId:req.auth!.userId},select:{id:true,status:true}});if(!vendor)return res.status(404).json({error:{code:'VENDOR_PROFILE_NOT_FOUND',message:'Submit your store application first.'}});
     let point=input.data.latitude!==undefined?{latitude:input.data.latitude,longitude:input.data.longitude!}:null;let geocodedAt:Date|null=null;
     if(!point&&googleGeocodingKey()){try{point=await geocodeAddress(`${input.data.address}, Nigeria`,googleGeocodingKey());geocodedAt=new Date();}catch(error){console.warn(JSON.stringify({event:'vendor_geocoding_failed',error:error instanceof GoogleMapsError?error.message:'unknown'}));}}
-    const [updated]=await prisma.$transaction([prisma.vendor.update({where:{id:vendor.id},data:{name:input.data.name,description:input.data.description,cuisine:input.data.cuisine,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,status:vendor.status===VendorStatus.DRAFT?VendorStatus.PENDING_REVIEW:vendor.status,termsAcceptedAt:new Date()}}),prisma.user.update({where:{id:req.auth!.userId},data:{name:input.data.ownerName,phone:input.data.contactPhone}})]);
+    const [updated]=await prisma.$transaction([prisma.vendor.update({where:{id:vendor.id},data:{name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,status:vendor.status===VendorStatus.DRAFT?VendorStatus.PENDING_REVIEW:vendor.status,termsAcceptedAt:new Date()}}),prisma.user.update({where:{id:req.auth!.userId},data:{name:input.data.ownerName,phone:input.data.contactPhone}})]);
     return res.json({data:{...updated,ownerName:input.data.ownerName}});
   }catch(error){return next(error);}
 });
@@ -513,15 +593,15 @@ app.get('/api/v1/vendors',async (req,res,next) => {
   try {
     const buildWhere=(isDemo:boolean):Prisma.VendorWhereInput=>{
       const where:Prisma.VendorWhereInput={status:VendorStatus.APPROVED,isOpen:true,isDemo};
-      if(input.data.q)where.OR=[{name:{contains:input.data.q,mode:'insensitive'}},{cuisine:{contains:input.data.q,mode:'insensitive'}},{address:{contains:input.data.q,mode:'insensitive'}},{products:{some:{available:true,isDemo,name:{contains:input.data.q,mode:'insensitive'}}}},{products:{some:{available:true,isDemo,description:{contains:input.data.q,mode:'insensitive'}}}}];
-      if(input.data.category)where.cuisine={contains:input.data.category,mode:'insensitive'};
+      if(input.data.q)where.OR=[{name:{contains:input.data.q,mode:'insensitive'}},{address:{contains:input.data.q,mode:'insensitive'}},{products:{some:{available:true,isDemo,name:{contains:input.data.q,mode:'insensitive'}}}},{products:{some:{available:true,isDemo,description:{contains:input.data.q,mode:'insensitive'}}}},{products:{some:{available:true,isDemo,category:{contains:input.data.q,mode:'insensitive'}}}}];
+      if(input.data.category)where.products={some:{available:true,category:{contains:input.data.category,mode:'insensitive'}}};
       return where;
     };
-    const select={id:true,name:true,cuisine:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{imageUrl:true},take:1}} as const;
+    const select={id:true,name:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{category:true,imageUrl:true},take:1}} as const;
     const realVendorCount=await prisma.vendor.count({where:{status:VendorStatus.APPROVED,isOpen:true,isDemo:false}});
     const source = catalogSource(realVendorCount,demoMode);
     const rows = source==='database'?await prisma.vendor.findMany({where:buildWhere(false),orderBy:{name:'asc'},take:50,select}):await prisma.vendor.findMany({where:buildWhere(true),orderBy:{name:'asc'},take:50,select});
-    const data = rows.map(v=>({id:v.id,name:v.name,cuisine:v.cuisine,neighborhood:v.address,eta:'Estimate at checkout',fee:800,rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:v.latitude===null?null:Number(v.latitude),longitude:v.longitude===null?null:Number(v.longitude)}));
+    const data = rows.map(v=>({id:v.id,name:v.name,cuisine:v.products[0]?.category??'Local store',neighborhood:v.address,eta:'Estimate at checkout',fee:800,rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:v.latitude===null?null:Number(v.latitude),longitude:v.longitude===null?null:Number(v.longitude)}));
     return res.json({data,meta:{source,total:data.length}});
   } catch(error) { return next(error); }
 });
@@ -631,9 +711,24 @@ app.post('/api/v1/wallet/topup/initialize',requireUser,async(req:AuthRequest,res
   try {
     const user=await prisma.user.findUniqueOrThrow({where:{id:req.auth!.userId},select:{email:true}});
     if(!user.email)return res.status(409).json({error:{code:'EMAIL_REQUIRED',message:'Add an email address before topping up.'}});
-    const reference=`wallet_${req.auth!.userId}_${input.data.idempotencyKey??randomBytes(10).toString('hex')}`;
-    const authorization=await initializePaystackTransaction({email:user.email,amountMinor:input.data.amountMinor,reference,metadata:{purpose:'wallet_topup',userId:req.auth!.userId}},paystackSecret());
+    const reference=`wallet-${req.auth!.userId}-${input.data.idempotencyKey??randomBytes(10).toString('hex')}`;
+    const authorization=await initializePaystackTransaction({email:user.email,amountMinor:input.data.amountMinor,reference,metadata:{purpose:'wallet_topup',userId:req.auth!.userId,amountMinor:input.data.amountMinor}},paystackSecret());
     return res.json({data:{method:'paystack',amountMinor:input.data.amountMinor,...authorization}});
+  }catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});return next(error);}
+});
+app.post('/api/v1/wallet/topup/verify',requireUser,async(req:AuthRequest,res,next)=>{
+  const input=z.object({reference:z.string().trim().min(8).max(120)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_TOPUP_REFERENCE',message:'A valid Paystack reference is required.'}});
+  try{
+    const verified=await verifyPaystackTransaction(input.data.reference,paystackSecret());
+    if(verified.status!=='success')return res.status(202).json({data:{status:verified.status,credited:false}});
+    const metadataAmount=typeof verified.metadata.amountMinor==='number'?verified.metadata.amountMinor:Number(verified.metadata.amountMinor);
+    if(verified.metadata.purpose!=='wallet_topup'||verified.metadata.userId!==req.auth!.userId||!Number.isSafeInteger(metadataAmount)||metadataAmount!==verified.amountMinor)return res.status(404).json({error:{code:'TOPUP_NOT_FOUND',message:'This payment reference does not belong to your wallet.'}});
+    const transactionReference=`paystack_${verified.reference}`;
+    try{await creditWallet({userId:req.auth!.userId,amountMinor:verified.amountMinor,reference:transactionReference,type:'TOPUP',metadata:{channel:verified.channel}});}
+    catch(error){if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')||!await prisma.walletTransaction.findUnique({where:{reference:transactionReference},select:{id:true}}))throw error;}
+    const wallet=await ensureWallet(req.auth!.userId);
+    return res.json({data:{status:'success',credited:true,balanceMinor:wallet.balanceMinor}});
   }catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});return next(error);}
 });
 app.post('/api/v1/wallet/dva/retry',requireUser,async(req:AuthRequest,res,next)=>{
@@ -648,7 +743,11 @@ app.post(['/webhooks/paystack','/api/v1/webhooks/paystack'],async(req:RawRequest
   const eventKey=`${event}:${typeof data.id==='string'||typeof data.id==='number'?data.id:reference??createHash('sha256').update(req.rawBody??'').digest('hex')}`;
   try {
     await prisma.paystackWebhookEvent.create({data:{eventKey,event,reference,payload:req.body as Prisma.InputJsonValue}});
-  } catch(error) { if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return res.status(200).json({data:{received:true,duplicate:true}});return next(error); }
+  } catch(error) {
+    if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002'))return next(error);
+    const prior=await prisma.paystackWebhookEvent.findUnique({where:{eventKey},select:{processedAt:true}});
+    if(prior?.processedAt)return res.status(200).json({data:{received:true,duplicate:true}});
+  }
   try {
     if(event==='charge.success'&&reference) {
       const verified=await verifyPaystackTransaction(reference,secret);
@@ -657,6 +756,11 @@ app.post(['/webhooks/paystack','/api/v1/webhooks/paystack'],async(req:RawRequest
       const userId=typeof verified.metadata.userId==='string'?verified.metadata.userId:null;
       const orderId=typeof verified.metadata.orderId==='string'?verified.metadata.orderId:null;
       if(purpose==='wallet_topup'&&userId) await creditWallet({userId,amountMinor:verified.amountMinor,reference:`paystack_${verified.reference}`,type:'TOPUP',metadata:{channel:verified.channel}});
+      if(verified.channel==='dedicated_nuban'&&purpose!=='wallet_topup') {
+        let wallet=verified.accountNumber?await prisma.wallet.findUnique({where:{dvaAccountNumber:verified.accountNumber},select:{userId:true}}):null;
+        if(!wallet&&verified.customerCode)wallet=await prisma.wallet.findUnique({where:{paystackCustomerCode:verified.customerCode},select:{userId:true}});
+        if(wallet)await creditWallet({userId:wallet.userId,amountMinor:verified.amountMinor,reference:`paystack_${verified.reference}`,type:'TOPUP',metadata:{channel:'dedicated_nuban'}});
+      }
       if(purpose==='order_payment'&&userId&&orderId) await prisma.$transaction(async tx=>{
         const payment=await tx.payment.findUnique({where:{providerReference:verified.reference}});if(!payment||payment.orderId!==orderId||payment.amountMinor!==verified.amountMinor)throw new PaystackError('Payment reference does not match its order.');
         const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
@@ -664,6 +768,7 @@ app.post(['/webhooks/paystack','/api/v1/webhooks/paystack'],async(req:RawRequest
         await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
       },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     }
+    if(event==='charge.failed'&&reference)await prisma.payment.updateMany({where:{providerReference:reference,status:'PENDING'},data:{status:'FAILED'}});
     await prisma.paystackWebhookEvent.update({where:{eventKey},data:{processedAt:new Date()}});
     return res.json({data:{received:true}});
   } catch(error) { console.error(JSON.stringify({event:'paystack_webhook_processing_failed',eventKey,errorType:error instanceof Error?error.name:'unknown'}));return res.status(500).json({error:{code:'WEBHOOK_PROCESSING_FAILED',message:'Webhook processing will be retried.'}}); }
@@ -676,6 +781,20 @@ app.get('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:AuthR
     return res.json({data});
   }
   catch(error) { return next(error); }
+});
+app.get('/api/v1/orders/:orderId/tracking',requireUser,requireRole(Role.CUSTOMER),async(req:AuthRequest,res,next)=>{
+  try{
+    const order=await prisma.order.findFirst({where:{id:req.params.orderId,customerId:req.auth!.userId},select:{id:true,vendor:{select:{id:true,name:true,address:true,latitude:true,longitude:true,geocodedAt:true}},address:{select:{id:true,line1:true,city:true,latitude:true,longitude:true,geocodedAt:true}},delivery:{select:{id:true,status:true,assignedRiderId:true,assignedRider:{select:{location:{select:{latitude:true,longitude:true,updatedAt:true}}}}}}}});
+    if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'This order was not found.'}});
+    const delivery=order.delivery;
+    if(!delivery||!delivery.assignedRiderId||![DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP].includes(delivery.status))return res.status(409).json({error:{code:'TRACKING_UNAVAILABLE',message:'Live rider tracking is available after a rider is assigned.'}});
+    const [vendorPoint,customerPoint]=await Promise.all([freshVendorCoordinates(order.vendor),order.address?freshAddressCoordinates(order.address):null]);
+    const location=delivery.assignedRider?.location;
+    const rider=location&&Date.now()-location.updatedAt.getTime()<5*60_000
+      ?{latitude:Number(location.latitude),longitude:Number(location.longitude),updatedAt:location.updatedAt.toISOString()}
+      :null;
+    return res.json({data:{deliveryId:delivery.id,deliveryStatus:delivery.status,vendor:{name:order.vendor.name,latitude:vendorPoint?.latitude??null,longitude:vendorPoint?.longitude??null},customer:{latitude:customerPoint?.latitude??null,longitude:customerPoint?.longitude??null},rider}});
+  }catch(error){return next(error);}
 });
 app.get('/api/v1/wallet/transactions',requireUser,requireRole(Role.CUSTOMER),async(req:AuthRequest,res,next)=>{
   try{
@@ -738,7 +857,7 @@ app.get('/api/v1/admin/overview',requireUser,requireRole(Role.ADMIN),async(_req,
 app.get('/api/v1/admin/applications',requireUser,requireRole(Role.ADMIN),async(_req,res,next)=>{
   try{
     const [vendors,riders]=await Promise.all([
-      prisma.vendor.findMany({where:{status:{in:[VendorStatus.DRAFT,VendorStatus.PENDING_REVIEW]}},orderBy:{createdAt:'asc'},take:50,select:{id:true,name:true,cuisine:true,address:true,status:true,createdAt:true,owner:{select:{name:true,email:true}}}}),
+      prisma.vendor.findMany({where:{status:{in:[VendorStatus.DRAFT,VendorStatus.PENDING_REVIEW]}},orderBy:{createdAt:'asc'},take:50,select:{id:true,name:true,address:true,status:true,createdAt:true,owner:{select:{name:true,email:true}}}}),
       prisma.riderProfile.findMany({where:{status:{in:[VendorStatus.DRAFT,VendorStatus.PENDING_REVIEW]}},orderBy:{user:{createdAt:'asc'}},take:50,select:{id:true,status:true,vehicleType:true,serviceArea:true,user:{select:{name:true,email:true,createdAt:true}}}})
     ]);
     return res.json({data:{vendors,riders}});
@@ -782,4 +901,4 @@ void pruneExpiredGoogleCoordinates().catch(error=>console.error(JSON.stringify({
 setInterval(()=>{
   void pruneExpiredGoogleCoordinates().catch(error=>console.error(JSON.stringify({event:'google_coordinate_prune_failed',error:error instanceof Error?error.name:'unknown'})));
 },5*60_000).unref();
-app.listen(port,()=>console.log(`Smile API listening on http://localhost:${port}`));
+app.listen(port,'0.0.0.0',()=>console.log(`Smile API listening on port ${port} on all network interfaces`));

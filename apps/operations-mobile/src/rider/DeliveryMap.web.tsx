@@ -1,5 +1,6 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
 import type { RiderDelivery } from '@makanza/mobile-core';
 import { api } from '../services/api';
 import { mobileEnv } from '../config/env';

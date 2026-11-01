@@ -7,7 +7,7 @@ Two Expo React Native apps use the shared `@makanza/mobile-core` API helper and 
 The customer app now opens on a photo-led Lagos discovery experience with a delivery-location header, search, quick category filters, editorial food banner, kitchen cards with delivery details, a persistent bag shortcut, and a compact three-destination navigation bar. The operations app has a separate service-desk presentation, with live order counts and a kitchen-first action hierarchy; vendor and rider workflows remain role-gated and use the shared API. Remote food photography is used for catalog presentation, while all listing and menu content still comes from the database API.
 
 - `apps/customer-mobile`: customer registration/sign-in, API-backed kitchen search, menu browsing, a single-kitchen cart, address entry, development-only demo order placement, and order history. Session tokens are held in Expo SecureStore.
-- `apps/operations-mobile`: shared sign-in for vendor and rider roles. Vendor users can load their own kitchen orders and submit accept/reject/preparing/ready transitions. Users with both roles can switch the visible workspace. A signed-in customer account may submit rider onboarding; the rider workspace stays limited until the API reports the role/profile state.
+- `apps/operations-mobile`: role-first onboarding for vendor and rider accounts, with role-specific sign-in and signup. Auth uses the same `/auth/register`, `/auth/login`, and session endpoints as the customer app; the selected role opens its vendor or rider application. Applications update the shared user record, so customer, vendor, and rider apps use one account. Users with both roles can switch workspaces; server authorization remains authoritative.
 - Approved riders can request foreground location permission, send a fresh location before going online, and share updates while the app remains open (about once a minute or after 100 m). Offers refresh while the app is active. Accept/reject, assigned deliveries, pickup confirmation, and six-digit completion verification call the rider API. The customer app displays the delivery code only when the API returns it for an assigned delivery.
 - Leaving the app stops location updates and marks an online rider offline. Active delivery controls remain available on return and can resume foreground location explicitly. The app does not request background location or promise tracking while the operating system suspends it.
 
@@ -24,7 +24,15 @@ Use Expo's Android/iOS launch controls. Root scripts are available as `pnpm mobi
 
 For local API-backed exploration, start PostgreSQL, apply migrations, and seed demo data using the main [README](../README.md). Demo customer and vendor credentials are defined by `DEMO_PASSWORD`.
 
-The operations app shares login with the customer app/web. Create a Makanza account in either customer client first, then sign in to operations. A customer-only account can submit a rider application there; vendor users need an approved vendor account, and rider controls remain locked until the rider application is approved. The development seed provides a demo rider account.
+## Customer phone signup
+
+New customer accounts normally require a phone verification code before the API creates the account or issues a session. Signup verification uses Infobip 2FA over SMS. Configure `INFOBIP_BASE_URL`, `INFOBIP_API_KEY`, `INFOBIP_2FA_APPLICATION_ID`, `INFOBIP_2FA_MESSAGE_ID`, and `INFOBIP_2FA_SENDER` in the server environment. Create an enabled 2FA application and SMS message template in Infobip first. The API stores Infobip's `pinId` on the pending signup and uses that provider reference to verify the submitted code. Twilio Verify code and environment variables are retained but are inactive. Signup data expires after 15 minutes and resend requests are limited to one per minute. Infobip 2FA's documented channels are SMS, voice, and email; this signup flow currently offers SMS.
+
+For local development only, set `PHONE_VERIFICATION_BYPASS=true` to create a tagged demo customer account and sign in immediately without sending a code. Its phone remains unverified. The API ignores this flag when `NODE_ENV=production`.
+
+See [Twilio Verify phone verification](https://www.twilio.com/docs/verify/api/verification) and [WhatsApp verification setup](https://www.twilio.com/docs/verify/whatsapp). Existing accounts continue to sign in by email and password. Changing a phone number on an existing account requires verification; the current profile endpoint rejects unverified phone changes.
+
+The operations app shares account registration and login with the customer app/web. New vendors and riders can create an account from their selected role flow, then submit the vendor or rider application in the matching workspace. The selected role is stored locally for the next launch, while role membership and approval status come from the API. A customer can sign in with the same account and apply for either role. Operational tools remain gated by server-side approval. The development seed provides a demo rider account.
 
 ## SDK and verification
 

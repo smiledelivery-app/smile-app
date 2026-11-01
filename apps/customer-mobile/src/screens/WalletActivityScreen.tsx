@@ -1,6 +1,7 @@
-﻿import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
 type Transaction={id:string;amountMinor:number;status:string;provider:string;isDemo:boolean;createdAt:string;order:{id:string;vendor:{name:string}}};

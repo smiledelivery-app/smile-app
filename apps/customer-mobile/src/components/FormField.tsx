@@ -1,4 +1,8 @@
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { AppTextInput as TextInput } from '@makanza/mobile-ui';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { StyleSheet, View, type TextInputProps } from 'react-native';
+import { radius, semantic, space, typeScale } from '../theme/tokens';
+import { darkColors, lightColors } from '../theme/colors';
 
-export default function FormField({label,dark=false,...props}:{label:string;dark?:boolean}&TextInputProps){return <View style={s.wrap}><Text style={[s.label,dark&&s.textDark]}>{label}</Text><TextInput {...props} placeholderTextColor={dark?'#9ba99e':'#9aa197'} style={[s.input,dark&&s.inputDark,props.style]}/></View>}
-const s=StyleSheet.create({wrap:{marginTop:12},label:{fontSize:13,fontWeight:'700',color:'#27382d',marginBottom:7},input:{height:51,borderRadius:14,borderWidth:1,borderColor:'#e4e7de',backgroundColor:'white',paddingHorizontal:14,fontSize:16,color:'#192b23'},inputDark:{borderColor:'#2a382f',backgroundColor:'#18251c',color:'#edf3e9'},textDark:{color:'#edf3e9'}});
+export default function FormField({label,dark=false,...props}:{label:string;dark?:boolean}&TextInputProps){const c=semantic(dark?darkColors:lightColors);return <View style={s.wrap}><Text style={[s.label,{color:c.textPrimary}]}>{label}</Text><TextInput {...props} accessibilityLabel={props.accessibilityLabel??label} placeholderTextColor={c.textSecondary} style={[s.input,{borderColor:c.border,backgroundColor:c.surface,color:c.textPrimary},props.style]}/></View>}
+const s=StyleSheet.create({wrap:{marginTop:space.md},label:{...typeScale.label,marginBottom:space.sm},input:{minHeight:50,borderRadius:radius.md,borderWidth:1,paddingHorizontal:space.md,fontSize:15}});

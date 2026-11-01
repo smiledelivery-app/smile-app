@@ -1,13 +1,15 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Linking, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, Platform, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '../components/AppIcon';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
 import { ApiError, type RiderDelivery, type RiderOffer, type RiderProfile, type Session, type VendorOrder } from '@makanza/mobile-core';
 import { api } from '../services/api';
 import { darkColors, lightColors, type AppColors } from '../theme/colors';
 import OnboardingScreen from '../onboarding/OnboardingScreen';
+import RoleChoiceScreen from '../onboarding/RoleChoiceScreen';
 import SignInScreen from '../auth/SignInScreen';
 import VendorWorkspace from './VendorWorkspace';
 import RiderWorkspace from './RiderWorkspace';
@@ -17,11 +19,24 @@ import { mobileEnv } from '../config/env';
 
 type WorkRole='VENDOR'|'RIDER';
 
+// expo-secure-store is native-only. Use browser storage for the web preview so
+// restoring preferences/session state never crashes the app before it renders.
+const readStorage=(key:string):Promise<string|null>=>Platform.OS==='web'
+  ? Promise.resolve(typeof window==='undefined'?null:window.localStorage.getItem(key))
+  : SecureStore.getItemAsync(key);
+const writeStorage=(key:string,value:string):Promise<void>=>Platform.OS==='web'
+  ? Promise.resolve(typeof window==='undefined'?undefined:window.localStorage.setItem(key,value))
+  : SecureStore.setItemAsync(key,value);
+const removeStorage=(key:string):Promise<void>=>Platform.OS==='web'
+  ? Promise.resolve(typeof window==='undefined'?undefined:window.localStorage.removeItem(key))
+  : SecureStore.deleteItemAsync(key);
+
 export default function App(){
   const [session,setSession]=useState<Session|null>(null);
   const [colorMode,setColorMode]=useState<'light'|'dark'>('light');
   const [onboardingReady,setOnboardingReady]=useState(false);
   const [hasOnboarded,setHasOnboarded]=useState(false);
+  const [selectedRole,setSelectedRole]=useState<WorkRole|null>(null);
   const [role,setRole]=useState<WorkRole|null>(null);
   const [browsingTabs,setBrowsingTabs]=useState(mobileEnv.demoMode);
   const [vendorOrders,setVendorOrders]=useState<VendorOrder[]>([]);
@@ -39,11 +54,11 @@ export default function App(){
   const c=colorMode==='dark'?darkColors:lightColors;
   const s=createStyles(c);
   const isDark=colorMode==='dark';
-  const toggleTheme=()=>{const next=isDark?'light':'dark';setColorMode(next);void SecureStore.setItemAsync('makanza-operations-theme-v1',next).catch(()=>undefined);};
+  const toggleTheme=()=>{const next=isDark?'light':'dark';setColorMode(next);void writeStorage('makanza-operations-theme-v1',next).catch(()=>undefined);};
   const token=session?.token;
 
-  useEffect(()=>{SecureStore.getItemAsync('makanza-operations-theme-v1').then(value=>{if(value==='dark'||value==='light')setColorMode(value);}).catch(()=>undefined);},[]);
-  useEffect(()=>{SecureStore.getItemAsync('makanza-operations-onboarding-v1').then(value=>setHasOnboarded(value==='complete')).catch(()=>setHasOnboarded(false)).finally(()=>setOnboardingReady(true));},[]);
+  useEffect(()=>{readStorage('makanza-operations-theme-v1').then(value=>{if(value==='dark'||value==='light')setColorMode(value);}).catch(()=>undefined);},[]);
+  useEffect(()=>{void Promise.all([readStorage('makanza-operations-onboarding-v2'),readStorage('makanza-operations-work-role-v1')]).then(([onboarding,storedRole])=>{setHasOnboarded(onboarding==='complete');if(storedRole==='VENDOR'||storedRole==='RIDER')setSelectedRole(storedRole);}).catch(()=>setHasOnboarded(false)).finally(()=>setOnboardingReady(true));},[]);
 
   const stopLocationUpdates=useCallback(()=>{locationSubscription.current?.remove();locationSubscription.current=null;setLocationSharing(false);},[]);
   const loadVendorOrders=useCallback(async(currentToken:string,quiet=false)=>{if(!quiet){setLoading(true);setError('');}try{setVendorOrders(await api.get<VendorOrder[]>('/vendor/orders',currentToken));setError('');}catch(e){setError(e instanceof Error?e.message:'Could not load kitchen orders.');}finally{if(!quiet)setLoading(false);}},[]);
@@ -64,17 +79,17 @@ export default function App(){
   },[]);
 
   useEffect(()=>{
-    SecureStore.getItemAsync('makanza-ops-session').then(async saved=>{
+    Promise.all([readStorage('makanza-ops-session'),readStorage('makanza-operations-work-role-v1')]).then(async([saved,storedRole])=>{
       if(mobileEnv.demoMode)return;
       if(!saved)return;
       try{
         const stored=JSON.parse(saved) as Session;
         const identity=await api.get<{userId:string;roles:string[]}>('/auth/me',stored.token);
         setSession({...stored,user:{...stored.user,roles:identity.roles}});
-        if(identity.roles.includes('VENDOR')){setRole('VENDOR');void loadVendorOrders(stored.token);}
-        else if(identity.roles.includes('RIDER')){setRole('RIDER');void loadRiderData(stored.token);}
+        const preferred=storedRole==='VENDOR'||storedRole==='RIDER'?storedRole:identity.roles.includes('VENDOR')?'VENDOR':identity.roles.includes('RIDER')?'RIDER':null;
+        if(preferred){setSelectedRole(preferred);setRole(preferred);if(preferred==='VENDOR'&&identity.roles.includes('VENDOR'))void loadVendorOrders(stored.token);if(preferred==='RIDER'&&identity.roles.includes('RIDER'))void loadRiderData(stored.token);}
         else setRole(null);
-      }catch(e){if(e instanceof ApiError&&e.status===401)await SecureStore.deleteItemAsync('makanza-ops-session');else setError(e instanceof Error?e.message:'Could not restore your session.');}
+      }catch(e){if(e instanceof ApiError&&e.status===401)await removeStorage('makanza-ops-session');else setError(e instanceof Error?e.message:'Could not restore your session.');}
     });
   },[loadRiderData,loadVendorOrders]);
 
@@ -104,12 +119,38 @@ export default function App(){
   const signIn=async()=>{
     setBusy('login');setError('');
     try{
+      if(!selectedRole)throw new Error('Choose vendor or rider before signing in.');
       const result=await api.post<Session>('/auth/login',{email,password});
-      await SecureStore.setItemAsync('makanza-ops-session',JSON.stringify(result));setSession(result);setPassword('');
-      if(result.user.roles.includes('VENDOR')){setRole('VENDOR');void loadVendorOrders(result.token);}
-      else if(result.user.roles.includes('RIDER')){setRole('RIDER');void loadRiderData(result.token);}
-      else{setRole(null);setNotice('Choose whether you want to set up a store or apply as a rider.');}
+      await writeStorage('makanza-ops-session',JSON.stringify(result));setSession(result);setPassword('');
+      setRole(selectedRole);
+      if(selectedRole==='VENDOR'&&result.user.roles.includes('VENDOR'))void loadVendorOrders(result.token);
+      if(selectedRole==='RIDER'&&result.user.roles.includes('RIDER'))void loadRiderData(result.token);
+      if(!result.user.roles.includes(selectedRole))setNotice(`You are signed in. Complete the ${selectedRole==='VENDOR'?'vendor':'rider'} application to request access.`);
     }catch(e){setError(e instanceof Error?e.message:'Could not sign in.');}
+    finally{setBusy('');}
+  };
+
+  const beginSignup=async(name:string,emailValue:string,phone:string,passwordValue:string,channel:'sms'|'whatsapp')=>{
+    if(!selectedRole)return null;setBusy('signup');setError('');
+    try{
+      const result=await api.post<Session|{phone:string;channel:string;expiresAt:string}>('/auth/register',{name,email:emailValue,phone,password:passwordValue,channel});
+      if('token'in result){await writeStorage('makanza-ops-session',JSON.stringify(result));setSession(result);setRole(selectedRole);setPassword('');setNotice(`Account created. Complete your ${selectedRole==='VENDOR'?'vendor':'rider'} application to request access.`);return null;}
+      setNotice(`Verification code sent by ${channel==='sms'?'SMS':'WhatsApp'}.`);return result.phone;
+    }catch(e){setError(e instanceof Error?e.message:'Could not start signup.');return null;}
+    finally{setBusy('');}
+  };
+
+  const verifySignup=async(phone:string,code:string)=>{
+    if(!selectedRole)return;setBusy('verify');setError('');
+    try{const result=await api.post<Session>('/auth/register/verify',{phone,code});await writeStorage('makanza-ops-session',JSON.stringify(result));setSession(result);setRole(selectedRole);setPassword('');setNotice(`Phone verified. Complete your ${selectedRole==='VENDOR'?'vendor':'rider'} application to request access.`);}
+    catch(e){setError(e instanceof Error?e.message:'Could not verify your phone.');}
+    finally{setBusy('');}
+  };
+
+  const resendSignup=async(phone:string):Promise<boolean>=>{
+    setBusy('verify');setError('');
+    try{await api.post('/auth/register/resend',{phone});setNotice('A new verification code was sent.');return true;}
+    catch(e){setError(e instanceof Error?e.message:'Could not resend the verification code.');return false;}
     finally{setBusy('');}
   };
 
@@ -126,7 +167,7 @@ export default function App(){
     try{
       const profile=await api.post<{id:string;status:string;available:boolean}>('/rider/onboarding',{vehicleType,serviceArea,termsAccepted:true},token);
       const updated={...session!,user:{...session!.user,roles:Array.from(new Set([...session!.user.roles,'RIDER']))}};
-      await SecureStore.setItemAsync('makanza-ops-session',JSON.stringify(updated));setSession(updated);
+      await writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);
       setRiderProfile({...profile,vehicleType,serviceArea,location:null});setOffers([]);setDeliveries([]);setNotice('Your application was submitted for review.');
     }catch(e){setError(e instanceof Error?e.message:'Could not submit the rider application.');}
     finally{setBusy('');}
@@ -199,22 +240,23 @@ export default function App(){
 
   const signOut=async()=>{
     const current=token;if(current&&role==='RIDER'&&riderProfile?.available)await api.put('/rider/availability',{available:false},current).catch(()=>setNotice('Could not confirm offline status because the network is unavailable.'));
-    stopLocationUpdates();setSession(null);setRole(null);setVendorOrders([]);setRiderProfile(null);setOffers([]);setDeliveries([]);await SecureStore.deleteItemAsync('makanza-ops-session');
+    stopLocationUpdates();setSession(null);setRole(null);setSelectedRole(null);setVendorOrders([]);setRiderProfile(null);setOffers([]);setDeliveries([]);await Promise.all([removeStorage('makanza-ops-session'),removeStorage('makanza-operations-work-role-v1')]);
     if(current)void api.post('/auth/logout',{},current).catch(()=>undefined);
   };
-  const switchRole=(next:WorkRole)=>{setRole(next);setError('');if(next==='VENDOR'&&token)void loadVendorOrders(token);if(next==='RIDER'&&token){if(session?.user.roles.includes('RIDER'))void loadRiderData(token);else setRiderProfile(null);}};
+  const switchRole=(next:WorkRole)=>{if(session)return;setSelectedRole(next);setRole(next);setError('');void writeStorage('makanza-operations-work-role-v1',next).catch(()=>undefined);};
 
-  const finishOnboarding=async()=>{setHasOnboarded(true);setOnboardingReady(true);await SecureStore.setItemAsync('makanza-operations-onboarding-v1','complete').catch(()=>undefined);};
+  const finishOnboarding=async(nextRole?:WorkRole)=>{setHasOnboarded(true);setOnboardingReady(true);await writeStorage('makanza-operations-onboarding-v2','complete').catch(()=>undefined);if(nextRole)switchRole(nextRole);};
+  const changeRole=()=>{setSelectedRole(null);setRole(null);setError('');void removeStorage('makanza-operations-work-role-v1').catch(()=>undefined);};
   if(!onboardingReady)return <SafeAreaView style={{flex:1,alignItems:'center',justifyContent:'center',backgroundColor:c.paper}}><ActivityIndicator color={c.green}/></SafeAreaView>;
-  if(!hasOnboarded)return <OnboardingScreen dark={isDark} onTheme={toggleTheme} onComplete={()=>void finishOnboarding()}/>;
+  if(!hasOnboarded)return <OnboardingScreen dark={isDark} onTheme={toggleTheme} onComplete={()=>void finishOnboarding()} onSelectRole={next=>void finishOnboarding(next)}/>;
+  if(!session&&!selectedRole)return <RoleChoiceScreen dark={isDark} onTheme={toggleTheme} onSelectRole={switchRole}/>;
   if(!session&&browsingTabs)return <SafeAreaView style={s.safe}><StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={c.paper}/><View style={s.header}><Text style={s.brand}><Text style={s.mark}>m</Text> smile <Text style={s.ops}>OPS</Text></Text><View style={s.headerActions}><Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={c.green}/></Pressable><Pressable accessibilityRole="link" onPress={()=>setBrowsingTabs(false)}><Text style={s.signOut}>Sign in</Text></Pressable></View></View><PublicTabsPreview colors={c} onBackToSignIn={()=>setBrowsingTabs(false)}/></SafeAreaView>;
   return <BrowseTabsContext.Provider value={()=>setBrowsingTabs(true)}><SafeAreaView style={s.safe}>
     <StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={c.paper}/>
     <View style={s.header}><Text style={s.brand}><Text style={s.mark}>m</Text> smile <Text style={s.ops}>OPS</Text></Text><View style={s.headerActions}><Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={c.green}/></Pressable>{session&&<Pressable accessibilityRole="button" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}</View></View>
-    {!session?<SignInScreen dark={isDark} email={email} password={password} busy={busy==='login'} error={error} onEmail={setEmail} onPassword={setPassword} onSubmit={()=>void signIn()}/>:<>
-      {role===null&&<View style={s.login}><Text style={s.eyebrow}>CHOOSE YOUR WORKSPACE</Text><Text style={s.title}>How will you use Smile?</Text><Text style={s.subtitle}>You can apply as a store or rider. Each application is reviewed before operational tools unlock.</Text><Pressable style={s.button} onPress={()=>setRole('VENDOR')}><Text style={s.buttonText}>Set up a store</Text></Pressable><Pressable style={[s.button,s.buttonSecondary,{marginTop:10}]} onPress={()=>setRole('RIDER')}><Text style={[s.buttonText,s.buttonSecondaryText]}>Apply to ride</Text></Pressable></View>}
-      {session.user.roles.includes('VENDOR')&&session.user.roles.includes('RIDER')&&<View style={s.roleSwitch}>{(['VENDOR','RIDER'] as WorkRole[]).map(item=><Pressable key={item} onPress={()=>switchRole(item)} style={[s.roleTab,role===item&&s.roleTabActive]}><Text style={[s.roleTabText,role===item&&s.roleTabTextActive]}>{item==='VENDOR'?'Vendor':'Rider'}</Text></Pressable>)}</View>}
-      {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} colors={c} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status)=>void updateOrder(id,status)} onRequestRiderAccess={()=>switchRole('RIDER')} onSignOut={()=>void signOut()} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void SecureStore.setItemAsync('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
+    {!session&&selectedRole?<SignInScreen role={selectedRole} dark={isDark} email={email} password={password} busy={busy} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={()=>void signIn()} onSignup={beginSignup} onVerify={(phone,code)=>void verifySignup(phone,code)} onResend={resendSignup} onChangeRole={changeRole}/>:!session?<RoleChoiceScreen dark={isDark} onTheme={toggleTheme} onSelectRole={switchRole}/>:<>
+      {role===null&&<View style={s.login}><Text style={s.eyebrow}>WORKSPACE NOT SELECTED</Text><Text style={s.title}>Sign out to choose a workspace.</Text><Text style={s.subtitle}>Your current session stays in one role. Sign out first if you want to enter another workspace.</Text><Pressable style={s.button} onPress={()=>void signOut()}><Text style={s.buttonText}>Sign out</Text></Pressable></View>}
+      {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} colors={c} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status)=>void updateOrder(id,status)} onSignOut={()=>void signOut()} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
       {role==='RIDER'&&<RiderWorkspace token={token??''} authorized={session.user.roles.includes('RIDER')} profile={riderProfile} offers={offers} deliveries={deliveries} loading={loading} busy={busy} error={error} notice={notice} locationMessage={locationMessage} locationSharing={locationSharing} locationPermissionNeeded={locationPermissionNeeded} vehicleType={vehicleType} serviceArea={serviceArea} termsAccepted={termsAccepted} completionCodes={completionCodes} pickupCodes={pickupCodes} colors={c} onReload={()=>token&&void loadRiderData(token)} onAvailability={available=>void setAvailability(available)} onAccept={offer=>void acceptOffer(offer)} onReject={offer=>void rejectOffer(offer)} onPickup={(delivery,code)=>void pickup(delivery,code)} onPickupCode={(id,code)=>setPickupCodes(current=>({...current,[id]:code}))} onComplete={delivery=>void complete(delivery)} onCode={(id,code)=>setCompletionCodes(current=>({...current,[id]:code}))} onShareLocation={()=>void startForegroundLocation().catch(e=>setLocationMessage(e instanceof Error?e.message:'Location sharing could not start.'))} onOpenSettings={()=>void Linking.openSettings()} onVehicle={setVehicleType} onArea={setServiceArea} onTerms={()=>setTermsAccepted(value=>!value)} onApply={()=>void applyForRider()} onSignOut={()=>void signOut()}/>}
     </>}
   </SafeAreaView></BrowseTabsContext.Provider>;

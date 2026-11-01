@@ -1,4 +1,5 @@
-﻿import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { Pressable, StyleSheet, View } from 'react-native';
 import type { VendorOrder } from '@makanza/mobile-core';
 
 type Props={order:VendorOrder;busy:boolean;dark:boolean;onAction:(id:string,status:string)=>void};

@@ -1,31 +1,51 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { Pressable, StatusBar, Text, View } from 'react-native';
+import { ImageBackground, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '../components/AppIcon';
 import { onboardingStyles as s } from '../theme/onboarding';
 
-const slides=[{eyebrow:'THE PEOPLE BEHIND EVERY DELIVERY',title:'Welcome to the work that moves us.',body:'One workspace for the kitchens making the food and the riders bringing it home.',icon:'sparkles-outline' as const,tag:'SMILE OPERATIONS'},{eyebrow:'A BETTER DAY IN THE KITCHEN',title:'Every order, clearly handled.',body:'Accept new orders, keep preparation moving and mark each handoff when it is ready.',icon:'receipt-outline' as const,tag:'FOR VENDORS'},{eyebrow:'GOOD THINGS ARE ON THE WAY',title:'Pick up. Ride out. Deliver.',body:'Go online when you are ready, accept nearby offers and confirm each delivery with the customer.',icon:'navigate-outline' as const,tag:'FOR RIDERS'}];
+type WorkRole='VENDOR'|'RIDER';
+const slides=[
+  {eyebrow:'ONE PLATFORM, TWO WAYS TO MOVE',title:'Good work starts here.',body:'Run your kitchen or bring orders closer to home. Smile keeps each job clear from start to finish.',image:'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&w=1400&q=85',tag:'WELCOME TO SMILE'},
+  {eyebrow:'FOR LOCAL KITCHENS',title:'Make every order count.',body:'Keep new orders, preparation and handoffs in one simple workspace.',image:'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1400&q=85',tag:'VENDOR TOOLS'},
+  {eyebrow:'FOR RIDERS',title:'Every delivery moves us forward.',body:'Go online when you are ready, see nearby offers and confirm each handoff.',image:'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1400&q=85',tag:'RIDER TOOLS'},
+];
 
-export default function OnboardingScreen({onComplete,dark,onTheme}:{onComplete:()=>void;dark:boolean;onTheme:()=>void}){
+export default function OnboardingScreen({onSelectRole,onComplete,dark,onTheme}:{onSelectRole:(role:WorkRole)=>void;onComplete:()=>void;dark:boolean;onTheme:()=>void}){
   const [step,setStep]=useState(0);const slide=slides[step];
   return <SafeAreaView style={[s.safe,dark&&s.safeDark]}>
-    <StatusBar barStyle={dark?'light-content':'dark-content'} backgroundColor={dark?'#0e1711':'#f6f7ef'}/>
-    <View style={s.top}>
-      <Text style={[s.brand,dark&&s.textDark]}><Text style={s.brandMark}>m</Text> smile <Text style={s.ops}>OPS</Text></Text>
-      <View style={s.topActions}>
-        <Pressable accessibilityRole="button" accessibilityLabel={dark?'Switch to light mode':'Switch to dark mode'} onPress={onTheme} style={{width:36,height:36,borderRadius:18,alignItems:'center',justifyContent:'center',backgroundColor:dark?'#18251c':'#f0f2e9'}}><Ionicons name={dark?'sunny-outline':'moon-outline'} size={23} color={dark?'#edf3e9':'#194c3a'}/></Pressable>
-        <Pressable accessibilityRole="button" onPress={onComplete} hitSlop={12}><Text style={[s.skip,dark&&s.textDark]}>Skip</Text></Pressable>
+    <StatusBar barStyle="light-content" backgroundColor="#194c3a"/>
+    <ImageBackground source={{uri:slide.image}} style={styles.image} imageStyle={styles.imageRadius}>
+      <View style={styles.shade}/>
+      <View style={styles.top}>
+        <Text style={styles.brand}><Text style={styles.brandMark}>m</Text> smile <Text style={styles.ops}>OPS</Text></Text>
+        <View style={styles.actionsTop}>
+          <Pressable accessibilityRole="button" accessibilityLabel={dark?'Switch to light mode':'Switch to dark mode'} onPress={onTheme} style={styles.theme}><Ionicons name={dark?'sunny-outline':'moon-outline'} size={21} color="white"/></Pressable>
+          <Pressable accessibilityRole="button" onPress={onComplete} hitSlop={12}><Text style={styles.skip}>Skip</Text></Pressable>
+        </View>
       </View>
-    </View>
-    <View style={[s.art,dark&&s.artDark]}>
-      <View style={[s.orbitLarge,dark&&s.orbitDark]}/><View style={[s.orbitSmall,dark&&s.orbitDark]}/>
-      <View style={s.iconBubble}><Ionicons name={slide.icon} size={62} color="#d5ef81"/></View>
-      <View style={s.tag}><Text style={s.tagText}>{slide.tag}</Text></View><View style={s.sparkle}><Text style={s.sparkleText}>✦</Text></View>
-    </View>
-    <View style={s.content}>
-      <Text style={s.eyebrow}>{slide.eyebrow}</Text><Text style={[s.title,dark&&s.textDark]}>{slide.title}</Text><Text style={[s.body,dark&&s.mutedDark]}>{slide.body}</Text>
-      <View style={s.progress}>{slides.map((_,i)=><View key={i} style={[s.dot,i===step&&s.dotActive]}/>)}</View>
-      <View style={s.actions}>{step>0&&<Pressable accessibilityRole="button" onPress={()=>setStep(i=>i-1)} style={s.prev}><Text style={[s.prevText,dark&&s.textDark]}>Previous</Text></Pressable>}<Pressable accessibilityRole="button" onPress={()=>step<2?setStep(i=>i+1):onComplete()} style={s.next}><Text style={s.nextText}>{step<2?'Next':'Continue to sign in'}  →</Text></Pressable></View>
-    </View>
+      <View style={styles.photoTag}><Text style={styles.photoTagText}>{slide.tag}</Text></View>
+      <View style={styles.content}>
+        <Text style={styles.eyebrow}>{slide.eyebrow}</Text>
+        <Text style={styles.title}>{slide.title}</Text>
+        <Text style={styles.body}>{slide.body}</Text>
+        <View style={s.progress}>{slides.map((_,i)=><View key={i} style={[s.dot,i===step&&s.dotActive]}/>)}</View>
+        {step<slides.length-1
+          ? <View style={s.actions}>{step>0&&<Pressable accessibilityRole="button" onPress={()=>setStep(value=>value-1)} style={s.prev}><Text style={[s.prevText,dark&&s.textDark]}>Previous</Text></Pressable>}<Pressable accessibilityRole="button" onPress={()=>setStep(value=>value+1)} style={s.next}><Text style={s.nextText}>Next  →</Text></Pressable></View>
+          : <View style={styles.roleChoices}>
+              <Pressable accessibilityRole="button" onPress={()=>onSelectRole('VENDOR')} style={styles.roleCard}><View style={styles.roleIcon}><Ionicons name="storefront-outline" size={24} color="#194c3a"/></View><View style={styles.roleCopy}><Text style={styles.roleTitle}>Continue as a vendor</Text><Text style={styles.roleBody}>Manage a kitchen and its orders</Text></View><Ionicons name="arrow-forward" size={20} color="#194c3a"/></Pressable>
+              <Pressable accessibilityRole="button" onPress={()=>onSelectRole('RIDER')} style={[styles.roleCard,styles.roleCardRider]}><View style={[styles.roleIcon,styles.riderIcon]}><Ionicons name="bicycle-outline" size={24} color="#194c3a"/></View><View style={styles.roleCopy}><Text style={styles.roleTitle}>Continue as a rider</Text><Text style={styles.roleBody}>Apply to deliver with Smile</Text></View><Ionicons name="arrow-forward" size={20} color="#194c3a"/></Pressable>
+            </View>}
+      </View>
+    </ImageBackground>
   </SafeAreaView>;
 }
+
+const styles=StyleSheet.create({
+  image:{flex:1,justifyContent:'space-between',backgroundColor:'#194c3a'},imageRadius:{},shade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(13,38,27,.38)'},
+  top:{height:62,paddingHorizontal:22,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},brand:{fontSize:22,fontWeight:'900',letterSpacing:-.5,color:'white'},brandMark:{fontFamily:'serif',color:'#d5ef81'},ops:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:'#d5ef81'},actionsTop:{flexDirection:'row',alignItems:'center',gap:12},theme:{width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(255,255,255,.18)'},skip:{fontSize:13,fontWeight:'800',color:'white',padding:8},
+  photoTag:{alignSelf:'flex-start',marginLeft:22,marginTop:18,paddingHorizontal:12,paddingVertical:8,borderRadius:18,backgroundColor:'#d5ef81'},photoTagText:{fontSize:10,letterSpacing:1,fontWeight:'900',color:'#194c3a'},
+  content:{paddingHorizontal:24,paddingTop:24,paddingBottom:22,backgroundColor:'rgba(255,255,255,.96)',borderTopLeftRadius:28,borderTopRightRadius:28},eyebrow:{fontSize:11,letterSpacing:1.4,fontWeight:'900',color:'#6b8155',marginBottom:9},title:{fontSize:34,lineHeight:40,fontWeight:'800',letterSpacing:-1,color:'#192b23'},body:{fontSize:15,lineHeight:22,color:'#747d73',marginTop:8},
+  roleChoices:{gap:9,marginTop:2},roleCard:{minHeight:68,flexDirection:'row',alignItems:'center',gap:12,paddingHorizontal:13,paddingVertical:10,borderRadius:17,backgroundColor:'#e9f2e6',borderWidth:1,borderColor:'#d7e6d5'},roleCardRider:{backgroundColor:'#f1f3ec'},roleIcon:{width:43,height:43,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:'#d4e8d3'},riderIcon:{backgroundColor:'#dfe8d7'},roleCopy:{flex:1},roleTitle:{fontSize:14,fontWeight:'900',color:'#194c3a'},roleBody:{fontSize:11,color:'#65746a',marginTop:3},
+});

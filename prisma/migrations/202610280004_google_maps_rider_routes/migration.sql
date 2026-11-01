@@ -1,1 +1,1 @@
-﻿ALTER TABLE "RiderOffer" ADD COLUMN "pickupDistanceMeters" INTEGER;
+ALTER TABLE "RiderOffer" ADD COLUMN "pickupDistanceMeters" INTEGER;

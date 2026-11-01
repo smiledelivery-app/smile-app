@@ -1,3 +1,6 @@
-export const lightColors={ink:'#192b23',green:'#194c3a',lime:'#d5ef81',cream:'#f7f7ef',paper:'#fffef9',card:'#ffffff',muted:'#79817a',orange:'#e87c59',line:'#e8ebe2',isDark:false} as const;
-export const darkColors={ink:'#edf3e9',green:'#d5ef81',lime:'#d5ef81',cream:'#202b24',paper:'#0e1711',card:'#18251c',muted:'#aab4a8',orange:'#ff9c79',line:'#202b24',isDark:true} as const;
+// Ported from RafiqHQ_mobile's design system. `cream` is retained as a
+// compatibility alias for secondary surfaces; white remains the primary light
+// surface and brand green is reserved for actions and emphasis.
+export const lightColors={ink:'#1f2321',green:'#1d6147',mint:'#e6f0ea',cream:'#f6f5f2',paper:'#fbfbfa',card:'#ffffff',muted:'#4f5451',accent:'#2e8a62',line:'#eaeae7',isDark:false} as const;
+export const darkColors={ink:'#eff0e7',green:'#7cc7a0',mint:'#203b2d',cream:'#19241e',paper:'#0a120e',card:'#111a15',muted:'#b5bcb3',accent:'#5dbe8e',line:'rgba(239,240,231,0.09)',isDark:true} as const;
 export type AppColors=typeof lightColors|typeof darkColors;

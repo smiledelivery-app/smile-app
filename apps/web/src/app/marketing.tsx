@@ -1,11 +1,12 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import type { ReactNode } from 'react';
 import MarketingMotion from './marketing-motion';
 
 type PageKind = 'vendors' | 'riders' | 'about' | 'contact' | 'faq';
 const links=[['Order food','/#discover'],['For business','/vendors'],['Ride with us','/riders'],['About Smile','/about']];
 const Badge=({children}:{children:ReactNode})=><span className="s-badge"><i>✦</i>{children}</span>;
-const Brand=()=> <Link className="s-brand" href="/" aria-label="Smile home"><b>⌣</b>smile<i>.</i></Link>;
+const Brand=()=> <Link className="s-brand" href="/" aria-label="Smile home"><Image src="/smile-logo.png" width={32} height={32} alt="" priority/>smile<i>.</i></Link>;
 const Arrow=({children,href='/#discover'}:{children:ReactNode;href?:string})=><Link className="s-arrow" href={href}>{children}<b>↗</b></Link>;
 
 export function Header(){return <header className="s-header"><Brand/><nav>{links.map(([label,href])=><Link key={href} href={href}>{label}</Link>)}</nav><div className="s-header-actions"><Link href="/#discover">Sign in</Link><Arrow>Order now</Arrow></div><details className="s-mobile"><summary aria-label="Open menu">☰</summary><div>{links.map(([label,href])=><Link key={href} href={href}>{label}</Link>)}<Arrow>Order now</Arrow></div></details></header>}

@@ -1,4 +1,4 @@
-import type { CustomerOrder, Product, Vendor } from '@makanza/mobile-core';
+import type { CustomerOrder, OrderTracking, Product, Vendor } from '@makanza/mobile-core';
 
 export const demoLocation = { latitude: 6.5095, longitude: 3.3711 };
 
@@ -44,10 +44,12 @@ export const demoProducts: Record<string, Product[]> = {
 };
 
 const demoDate = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+const demoTracking:OrderTracking={deliveryId:'demo-delivery-1042',deliveryStatus:'PICKED_UP',vendor:{name:'Ada’s Kitchen',latitude:6.514,longitude:3.376},customer:{latitude:demoLocation.latitude,longitude:demoLocation.longitude},rider:{latitude:6.5115,longitude:3.3735,updatedAt:new Date().toISOString()}};
 
 export const demoOrders: CustomerOrder[] = [
   {
     id: 'demo-order-1042', status: 'PICKED_UP', totalMinor: 620000, createdAt: demoDate(1),
+    tracking:demoTracking,
     vendor: { name: 'Ada’s Kitchen' }, delivery: { status: 'PICKED_UP', assignedAt: demoDate(0.5), riderName: 'Tunde A.' }, deliveryCode: '284613',
     items: [{ id: 'demo-line-1', nameSnapshot: 'Smoky party jollof', quantity: 1, unitPriceMinor: 380000, addons: [{ id: 'demo-line-addon-1', nameSnapshot: 'Grilled chicken', quantity: 1, unitPriceMinor: 150000 }] }],
     events: [{ id: 'demo-event-1', status: 'CONFIRMED', createdAt: demoDate(1) }, { id: 'demo-event-2', status: 'PREPARING', createdAt: demoDate(0.8) }, { id: 'demo-event-3', status: 'PICKED_UP', createdAt: demoDate(0.5) }],

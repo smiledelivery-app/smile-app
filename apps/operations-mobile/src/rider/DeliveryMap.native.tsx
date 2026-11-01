@@ -1,5 +1,6 @@
-﻿import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type LatLng, type Region } from 'react-native-maps';
 import type { RiderDelivery } from '@makanza/mobile-core';
 import { api } from '../services/api';

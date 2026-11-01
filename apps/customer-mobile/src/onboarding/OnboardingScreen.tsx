@@ -1,5 +1,6 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { ImageBackground, Pressable, StatusBar, Text, View } from 'react-native';
+import { ImageBackground, Pressable, StatusBar, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { onboardingStyles as s } from '../theme/onboarding';
 

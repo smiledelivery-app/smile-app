@@ -1,5 +1,7 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
+import { BackHeader } from '../components/ui';
 import type { AppColors } from '../theme/colors';
 
 type Props={
@@ -10,9 +12,7 @@ type Props={
 
 export default function PreferencesScreen({colors:c,dark,autoRefresh,newsletter,onBack,onTheme,onAutoRefresh,onNewsletter,onPrivacy,onDeleteAccount}:Props){
   const s=styles(c);
-  return <ScrollView style={s.screen} contentContainerStyle={s.page}>
-    <Pressable accessibilityRole="button" accessibilityLabel="Back to profile" onPress={onBack} style={s.back}><Ionicons name="chevron-back" size={23} color={c.green}/><Text style={s.backText}>Profile</Text></Pressable>
-    <Text style={s.kicker}>MAKE IT YOURS</Text><Text style={s.title}>Settings</Text>
+  return <View style={s.screen}><BackHeader title="Settings" subtitle="Make Smile work for you" colors={c} onBack={onBack}/><ScrollView style={{flex:1}} contentContainerStyle={s.page}>
     <Text style={s.section}>APPEARANCE</Text>
     <View style={s.setting}>
       <Ionicons name={dark?'moon-outline':'sunny-outline'} size={24} color={c.green}/>
@@ -30,7 +30,7 @@ export default function PreferencesScreen({colors:c,dark,autoRefresh,newsletter,
     <Text style={s.section}>ACCOUNT & PRIVACY</Text>
     <Action icon="shield-checkmark-outline" title="Privacy policy" onPress={onPrivacy} c={c}/>
     <Action icon="trash-outline" title="Delete account" destructive onPress={onDeleteAccount} c={c}/>
-  </ScrollView>;
+  </ScrollView></View>;
 }
 
 function ToggleRow({icon,title,detail,value,onChange,c}:{icon:'notifications-outline'|'mail-outline';title:string;detail:string;value:boolean;onChange:(value:boolean)=>void;c:AppColors}){

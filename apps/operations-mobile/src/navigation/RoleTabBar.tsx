@@ -1,5 +1,6 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppText as Text } from '@makanza/mobile-ui';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
 import type { AppColors } from '../theme/colors';
 
 export type VendorTab = 'overview' | 'orders' | 'products' | 'account';

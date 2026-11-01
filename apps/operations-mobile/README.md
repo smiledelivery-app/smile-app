@@ -1,15 +1,17 @@
 # Smile Operations Mobile
 
-Expo and React Native application for approved vendors and riders. The signed-in user's authorized role determines the operations workflow.
+Expo and React Native application for vendor and rider workflows. Users choose a role in onboarding, then sign in or create an account through the same API used by the customer app. Role applications attach to that shared account; server approval determines when operational controls unlock.
 
 ## Setup
 
 1. From the repository root, install dependencies with `pnpm install`.
-2. Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL`.
+2. In development, leave `EXPO_PUBLIC_API_URL` blank to use the platform default: Android emulators use `http://10.0.2.2:4100/api/v1`; iOS simulators and web use `http://localhost:4100/api/v1`. For a physical phone, copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to your computer's LAN IP, such as `http://192.168.1.20:4100/api/v1`.
    - Android emulator: `http://10.0.2.2:4100/api/v1`
    - iOS simulator: `http://localhost:4100/api/v1`
    - Physical device: use your computer's LAN IP and ensure both devices share the network.
 3. Start the API, then run `pnpm --filter @makanza/operations-mobile start`.
+
+Vendor logos and cover photos are selected with the system image picker and uploaded using a server-signed Cloudinary request. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` in the API environment; keep the API secret out of the mobile app.
 
 ## Source layout
 
@@ -25,7 +27,7 @@ Expo and React Native application for approved vendors and riders. The signed-in
 
 ## Role-specific navigation
 
-The operations app has separate workspaces selected from the roles authorized on the signed-in account:
+The operations app opens the selected role's workspace after sign-in. A customer-only account can submit an application from that workspace; server role membership and approval still determine access to operational controls:
 
 - Vendors: **Overview**, **Orders**, **Products**, and **Account**. Orders, product listing, product creation, product availability, and vendor profile details use the vendor API.
 - Riders: **Go**, **Offers**, **Deliveries**, and **Profile**. Availability, offers, pickup, completion-code confirmation, profile, and foreground location use the rider API.

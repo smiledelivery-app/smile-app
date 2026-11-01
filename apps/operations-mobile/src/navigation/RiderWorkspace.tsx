@@ -1,5 +1,6 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import type { RiderDelivery, RiderOffer, RiderProfile } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import type { RiderTab } from './RoleTabBar';

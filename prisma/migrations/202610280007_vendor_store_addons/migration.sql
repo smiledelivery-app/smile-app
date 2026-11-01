@@ -1,4 +1,4 @@
-﻿ALTER TABLE "Vendor" ADD COLUMN "contactPhone" TEXT;
+ALTER TABLE "Vendor" ADD COLUMN "contactPhone" TEXT;
 ALTER TABLE "Vendor" ADD COLUMN "logoUrl" TEXT;
 ALTER TABLE "Vendor" ADD COLUMN "coverImageUrl" TEXT;
 ALTER TABLE "Vendor" ADD COLUMN "cacNumber" TEXT;

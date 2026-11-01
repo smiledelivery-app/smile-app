@@ -12,19 +12,23 @@
   },
   "dependencies": {
     "@expo/dom-webview": "~57.0.1",
-    "@expo/vector-icons": "15.1.1",
     "@makanza/mobile-core": "workspace:*",
+    "@makanza/mobile-ui": "workspace:*",
     "expo": "~57.0.0",
+    "expo-image-picker": "~57.0.17",
     "expo-location": "~57.0.22",
     "expo-secure-store": "~57.0.4",
+    "lucide-react-native": "^1.43.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-maps": "~1.27.2",
-    "react-native-safe-area-context": "~5.7.0"
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.5"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "@types/react-native": "^0.73.0",
     "typescript": "~6.0.3"
   }
 }

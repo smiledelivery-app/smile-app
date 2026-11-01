@@ -1,8 +1,11 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Ionicons } from '../components/AppIcon';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
+import { ScreenHeader } from '../components/ui';
+import PaystackCheckoutModal from './PaystackCheckoutModal';
 
 type Transaction = {
   id: string;
@@ -14,6 +17,7 @@ type Transaction = {
   order: { id: string; vendor: { name: string } };
 };
 type Filter = 'ALL' | 'PENDING' | 'FAILED' | 'SUCCESS';
+type WalletSummary={balanceMinor:number;currency:string;status:string;dva:{accountNumber:string|null;accountName:string|null;bankName:string|null;bankSlug:string|null;status:string}};
 const filters: { id: Filter; label: string }[] = [
   { id: 'ALL', label: 'All' },
   { id: 'PENDING', label: 'Pending' },
@@ -29,11 +33,15 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
 }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [balanceMinor, setBalanceMinor] = useState(2_345_000);
+  const [balanceAvailable,setBalanceAvailable]=useState(true);
+  const [balanceFromApi,setBalanceFromApi]=useState(false);
   const [loading, setLoading] = useState(!!token);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>('ALL');
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [notice, setNotice] = useState('');
+  const [checkout,setCheckout]=useState<{authorizationUrl:string;reference:string}|null>(null);
+  const [topUpBusy,setTopUpBusy]=useState(false);
   const s = styles(colors);
 
   useEffect(() => {
@@ -50,14 +58,23 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     }
     if (!token) {
       setTransactions([]);
+      setBalanceMinor(2_345_000);
+      setBalanceFromApi(false);
+      setBalanceAvailable(true);
       setLoading(false);
       setError('');
       return;
     }
 
     let active = true;
+    setBalanceMinor(2_345_000);
+    setBalanceFromApi(false);
+    setBalanceAvailable(true);
     setLoading(true);
     setError('');
+    api.get<WalletSummary>('/wallet',token)
+      .then(wallet=>{if(active){setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);}})
+      .catch(reason=>{if(active)setError(reason instanceof Error?reason.message:'Could not load wallet balance.');});
     api.get<Transaction[]>('/wallet/transactions', token)
       .then(rows => { if (active) setTransactions(rows); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load transactions.'); })
@@ -71,9 +88,13 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     return transaction.status.toUpperCase() === filter;
   }), [filter, transactions]);
 
-  const startTopUp = () => {
+  const startTopUp = async() => {
     if (!demoMode) {
-      setNotice('Wallet top-ups are not available yet. No money has been charged.');
+      if(!token){onSignIn();return;}
+      setTopUpBusy(true);setNotice('');
+      try{const authorization=await api.post<{authorizationUrl:string;reference:string}>('/wallet/topup/initialize',{amountMinor:500_000},token);setCheckout({authorizationUrl:authorization.authorizationUrl,reference:authorization.reference});}
+      catch(reason){setNotice(reason instanceof Error?reason.message:'Could not start wallet top-up. No payment was made.');}
+      finally{setTopUpBusy(false);}
       return;
     }
     const now = new Date().toISOString();
@@ -85,23 +106,39 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     setNotice('Simulated +₦5,000 added to this preview only. No money was charged.');
   };
 
-  return <ScrollView style={s.screen} contentContainerStyle={s.content}>
+  const closeCheckout=()=>{
+    setCheckout(null);
+    setNotice('Checkout closed. A successful payment will be added after Paystack confirms it.');
+    if(token)void api.get<WalletSummary>('/wallet',token).then(wallet=>{setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);}).catch(()=>undefined);
+  };
+
+  const verifyTopUp=async(reference:string)=>{
+    setCheckout(null);
+    if(!token)return;
+    setNotice('Verifying your payment with Paystack...');
+    try{
+      const result=await api.post<{status:string;credited:boolean;balanceMinor?:number}>('/wallet/topup/verify',{reference},token);
+      if(result.status==='success'&&result.balanceMinor!==undefined){setBalanceMinor(result.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);setNotice('Top-up complete. Your wallet balance has been updated.');}
+      else setNotice('Paystack is still confirming this payment. Your wallet will update when it is verified.');
+    }catch(reason){setNotice(reason instanceof Error?`Payment returned from checkout, but confirmation is still pending: ${reason.message}`:'Payment confirmation is still pending. Check your wallet again shortly.');}
+  };
+
+  return <View style={s.screen}><ScreenHeader title="Wallet" subtitle="Balance, payments, and activity" icon="card-outline" colors={colors}/><ScrollView style={{flex:1}} contentContainerStyle={s.content}>
     <Text style={s.kicker}>PAYMENTS & BALANCE</Text>
-    <Text style={s.title}>My wallet</Text>
 
     <View style={s.balanceCard}>
       <View style={s.balanceTop}>
-        <View style={s.walletMark}><Ionicons name="wallet-outline" size={23} color="#d5ef81"/></View>
+        <View style={s.walletMark}><Ionicons name="card-outline" size={23} color="#d8e5df"/></View>
         <Text style={s.balanceCaption}>WALLET BALANCE</Text>
         <Pressable accessibilityRole="button" accessibilityLabel={balanceVisible ? 'Hide wallet balance' : 'Show wallet balance'} onPress={() => setBalanceVisible(value => !value)} style={s.eyeButton}>
           <Ionicons name={balanceVisible ? 'eye-outline' : 'eye-off-outline'} size={24} color="white"/>
         </Pressable>
       </View>
-      <Text style={s.balance}>{balanceVisible ? demoMode ? `₦${(balanceMinor / 100).toLocaleString('en-NG')}` : 'Unavailable' : '••••••••'}</Text>
-      <Text style={s.balanceNote}>{demoMode ? 'Sample balance · local preview only' : 'A wallet balance is not available for this account yet.'}</Text>
-      <Pressable accessibilityRole="button" onPress={startTopUp} style={s.topUpButton}>
-        <Ionicons name="add" size={24} color="#194c3a"/>
-        <Text style={s.topUpText}>{demoMode ? 'Simulate +₦5,000' : 'Top up wallet'}</Text>
+      <Text style={s.balance}>{balanceVisible ? balanceAvailable ? `₦${(balanceMinor / 100).toLocaleString('en-NG')}` : 'Unavailable' : '••••••••'}</Text>
+      <Text style={s.balanceNote}>{demoMode?'Demo wallet balance':balanceFromApi?'Wallet balance · NGN':token?error||'Loading your balance':'Sign in to view your balance'}</Text>
+      <Pressable accessibilityRole="button" disabled={topUpBusy} onPress={startTopUp} style={[s.topUpButton,topUpBusy&&{opacity:.65}]}>
+        <Ionicons name="add" size={24} color="#1d6147"/>
+        <Text style={s.topUpText}>{topUpBusy?'Opening Paystack...':demoMode ? 'Simulate +₦5,000' : 'Top up +₦5,000'}</Text>
       </Pressable>
     </View>
 
@@ -141,7 +178,7 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     </View> : visibleTransactions.map(transaction => <TransactionRow key={transaction.id} transaction={transaction} colors={colors}/>)}
 
     <Text style={s.disclaimer}>{demoMode ? 'LOCAL PREVIEW: sample wallet records and simulated top-ups never represent real charges.' : 'Demo payment records are clearly marked and never represent real charges.'}</Text>
-  </ScrollView>;
+  </ScrollView>{checkout&&<PaystackCheckoutModal visible authorizationUrl={checkout.authorizationUrl} reference={checkout.reference} colors={colors} onClose={closeCheckout} onPaymentReturn={verifyTopUp}/>}</View>;
 }
 
 function TransactionRow({ transaction, colors }: { transaction: Transaction; colors: AppColors }) {
@@ -174,8 +211,8 @@ const styles = (c: AppColors) => StyleSheet.create({
   eyeButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   balance: { fontSize: 34, fontWeight: '900', letterSpacing: -.5, color: 'white', marginTop: 15 },
   balanceNote: { fontSize: 12, lineHeight: 18, color: '#e5efdc', marginTop: 4 },
-  topUpButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#d5ef81', paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, marginTop: 16 },
-  topUpText: { fontSize: 12, fontWeight: '900', color: '#194c3a' },
+  topUpButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#d8e5df', paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, marginTop: 16 },
+  topUpText: { fontSize: 12, fontWeight: '900', color: '#1d6147' },
   notice: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: 12, marginTop: 12, borderRadius: 12, backgroundColor: c.cream },
   noticeText: { flex: 1, fontSize: 12, lineHeight: 18, color: c.green },
   historyHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 25 },

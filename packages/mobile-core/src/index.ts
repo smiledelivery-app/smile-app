@@ -8,7 +8,7 @@ type RequestOptions = Omit<RequestInit,'headers'> & { token?:string; headers?:Re
 
 export function createApiClient(baseUrl:string) {
   const request = async <T>(path:string,options:RequestOptions={}):Promise<T> => {
-    if(!baseUrl) throw new ApiError('Set EXPO_PUBLIC_API_URL to your Smile API address.',0,'API_URL_MISSING');
+    if(!baseUrl) throw new ApiError('API URL is not configured. Set EXPO_PUBLIC_API_URL and restart the app.',0,'API_URL_MISSING');
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),15000);
     try {
@@ -43,7 +43,8 @@ export type ProductAddon = {id:string;productId:string;name:string;priceMinor:nu
 export type Product = {id:string;name:string;description:string;category:string;priceMinor:number;imageUrl:string|null;stock:number|null;addons?:ProductAddon[]};
 export type OrderItemAddon = {id:string;nameSnapshot:string;unitPriceMinor:number;quantity:number};
 export type OrderItem = {id:string;nameSnapshot:string;quantity:number;unitPriceMinor:number;addons?:OrderItemAddon[]};
-export type CustomerOrder = {id:string;status:string;totalMinor:number;createdAt:string;deliveryCode?:string|null;delivery?:{status:string;assignedAt:string|null;riderName:string|null}|null;items:OrderItem[];vendor?:{name:string};events:{id:string;status:string;createdAt:string;note?:string|null}[]};
+export type OrderTracking = {deliveryId:string;deliveryStatus:string;vendor:{name:string;latitude:number|null;longitude:number|null};customer:{latitude:number|null;longitude:number|null};rider:{latitude:number;longitude:number;updatedAt:string}|null};
+export type CustomerOrder = {id:string;status:string;totalMinor:number;createdAt:string;deliveryCode?:string|null;tracking?:OrderTracking|null;delivery?:{status:string;assignedAt:string|null;riderName:string|null}|null;items:OrderItem[];vendor?:{name:string};events:{id:string;status:string;createdAt:string;note?:string|null}[]};
 export type VendorOrder = {id:string;status:string;totalMinor:number;createdAt:string;items:OrderItem[];events:{id:string;status:string;createdAt:string}[];delivery?:{status:string;assignedAt:string|null;riderName:string|null;pickupCode:string|null}|null};
 export type RiderProfile = {id:string;status:string;available:boolean;vehicleType:string|null;serviceArea:string;location:{updatedAt:string}|null};
 export type RiderOffer = {id:string;deliveryId:string;expiresAt:string;pickupDistanceKm:number|null;vendor:{name:string;address:string};dropoffCity:string;itemCount:number;totalMinor:number};

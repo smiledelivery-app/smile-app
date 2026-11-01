@@ -1,5 +1,6 @@
+import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import type { AppColors } from '../theme/colors';
 import RoleTabBar, { type RiderTab, type VendorTab } from './RoleTabBar';
 
