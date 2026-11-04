@@ -2,6 +2,7 @@
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100/api/v1').replace(/\/$/, '');
 const TOKEN_KEY = 'smile.admin.session';
+export const apiBaseUrl = API_URL;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {

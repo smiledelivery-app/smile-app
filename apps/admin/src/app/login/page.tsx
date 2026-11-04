@@ -8,7 +8,7 @@ import { ArrowRight, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { api, setToken } from '@/lib/api';
+import { api, apiBaseUrl, setToken } from '@/lib/api';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email address.'),
@@ -30,7 +30,11 @@ export default function LoginPage() {
       router.replace('/');
     } catch (reason) {
       setToken(null);
-      setError(reason instanceof Error ? reason.message : 'Sign in failed.');
+      if (reason instanceof TypeError) {
+        setError(`The browser could not reach ${apiBaseUrl}. This usually means the API is blocking this admin site's origin. In the API service's Render environment, set ADMIN_ORIGIN=${window.location.origin} (without /login), then redeploy the API. Confirm the admin service has NEXT_PUBLIC_API_URL=${apiBaseUrl} and rebuild it.`);
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Sign in failed for an unknown reason.');
+      }
     }
   };
 
