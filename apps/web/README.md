@@ -12,6 +12,6 @@ The public API URL is safe to expose in the browser. Never place private credent
 
 ## Search engines and install metadata
 
-The storefront exposes a web app manifest at `/manifest.webmanifest`, crawler rules at `/robots.txt`, and a sitemap at `/sitemap.xml`. Set `NEXT_PUBLIC_SITE_URL` to the canonical public origin (for example, `https://your-domain.example`) in the production environment before building and deploying; it is used for canonical/social metadata and absolute sitemap URLs. The default is `https://smile.delivery`.
+The storefront exposes a web app manifest at `/manifest.webmanifest`, crawler rules at `/robots.txt`, and a sitemap at `/sitemap.xml`. Set `NEXT_PUBLIC_SITE_URL` to the canonical public origin in the production environment before building and deploying; it is used for canonical/social metadata and absolute sitemap URLs. The default is `https://smiledelivery24.com`.
 
 After deployment, verify the site in Google Search Console and submit `https://your-domain.example/sitemap.xml`. Search indexing and ranking are controlled by Google and are not immediate.

@@ -3,7 +3,7 @@ import { siteUrl } from '../lib/site';
 import './styles.css';
 import './marketing.css';
 
-const description = 'Smile Delivery brings smile food delivery in Lagos to your door. Order food, groceries and everyday essentials from local businesses.';
+const description = 'Smile is a food delivery app in Lagos. Order local food, groceries and everyday essentials with Smile Delivery.';
 
 export const metadata: Metadata = {
   metadataBase: siteUrl,
