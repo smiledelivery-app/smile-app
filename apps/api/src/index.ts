@@ -36,7 +36,13 @@ const allowedOrigins = new Set([
   configuredOrigin(process.env.WEB_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3000'),
   configuredOrigin(process.env.ADMIN_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3001'),
 ].filter((origin):origin is string=>Boolean(origin)));
-app.use(cors({ origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)), credentials: true }));
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+app.options('*', cors(corsOptions));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb',verify:(req,_res,buffer)=>{(req as Request&{rawBody?:Buffer}).rawBody=buffer;} }));
 
 type AuthRequest = Request & { auth?: { userId: string; roles: Role[] } };
