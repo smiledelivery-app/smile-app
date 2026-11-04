@@ -1,14 +1,13 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type LatLng, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, type LatLng, type Region } from 'react-native-maps';
 import type { RiderDelivery } from '@makanza/mobile-core';
 import { api } from '../services/api';
-import { mobileEnv } from '../config/env';
 import type { AppColors } from '../theme/colors';
 
 type Coordinate = { latitude: number; longitude: number };
-type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google-routes' };
+type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google'|'maplibre'; geometryFormat?:'google-encoded'|'latlng-semicolon' };
 const coord = (latitude: number | string | null | undefined, longitude: number | string | null | undefined): Coordinate | null => {
   if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) return null;
   const point = { latitude: Number(latitude), longitude: Number(longitude) };
@@ -25,7 +24,6 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
   useEffect(() => {
     let active = true;
     setLoading(true); setError(''); setRoute(null);
-    if (!mobileEnv.googleMapsEnabled) { setLoading(false); return () => { active = false; }; }
     api.get<RouteData>(`/rider/deliveries/${encodeURIComponent(delivery.id)}/route`, token)
       .then(result => { if (active) setRoute(result); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Route details are unavailable.'); })
@@ -33,7 +31,7 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
     return () => { active = false; };
   }, [delivery.id, delivery.status, token]);
 
-  const coordinates = useMemo(() => route?.encodedPolyline ? decodePolyline(route.encodedPolyline) : [], [route?.encodedPolyline]);
+  const coordinates = useMemo(() => route?.encodedPolyline ? route.geometryFormat==='latlng-semicolon' ? route.encodedPolyline.split(';').map(pair=>{const [latitude,longitude]=pair.split(',').map(Number);return {latitude,longitude};}).filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude)) : decodePolyline(route.encodedPolyline) : [], [route?.encodedPolyline,route?.geometryFormat]);
   const region = useMemo((): Region | undefined => {
     const points = [route?.origin, route?.destination, vendorPoint, customerPoint].filter((p): p is Coordinate => !!p);
     if (!points.length) return undefined;
@@ -46,10 +44,10 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
   const mapPoints = route ? [route.origin, route.destination] : destination ? [destination] : [];
 
   return <View style={[styles.wrap, { backgroundColor: c.cream, borderColor: c.line }]}>
-    {mobileEnv.googleMapsEnabled && region ? <MapView provider={PROVIDER_GOOGLE} style={styles.map} initialRegion={region} region={region} showsUserLocation showsMyLocationButton>
+    {region ? <MapView style={styles.map} initialRegion={region} region={region} showsUserLocation showsMyLocationButton>
       {mapPoints.map((point, index) => <Marker key={`${index}-${point.latitude}-${point.longitude}`} coordinate={point} title={route ? index === 0 ? 'Your current location' : delivery.status === 'PICKED_UP' ? 'Customer drop-off' : delivery.order.vendor.name : delivery.status === 'PICKED_UP' ? 'Customer drop-off' : delivery.order.vendor.name} pinColor={route && index === 0 ? '#194c3a' : '#e87c59'}/>)}
       {coordinates.length > 1 && <Polyline coordinates={coordinates} strokeWidth={5} strokeColor="#194c3a"/>}
-    </MapView> : <View style={styles.mapFallback}><Text style={[styles.fallbackTitle, { color: c.ink }]}>Route map</Text><Text style={[styles.fallbackCopy, { color: c.muted }]}>{mobileEnv.googleMapsEnabled ? 'A map pin is not available for this stop.' : 'Add restricted Google Maps SDK keys to the EAS build to show the live map.'}</Text></View>}
+    </MapView> : <View style={styles.mapFallback}><Text style={[styles.fallbackTitle, { color: c.ink }]}>Route map</Text><Text style={[styles.fallbackCopy, { color: c.muted }]}>A map pin is not available for this stop yet.</Text></View>}
     <View style={styles.routeMeta}>
       <View style={styles.routeCopy}><Text style={[styles.leg, { color: c.green }]}>{route?.leg === 'DROPOFF' || delivery.status === 'PICKED_UP' ? 'TO CUSTOMER' : 'TO PICKUP'}</Text><Text style={[styles.distance, { color: c.ink }]}>{route ? `${(route.distanceMeters / 1000).toFixed(1)} km · ${route.durationSeconds === null ? 'ETA unavailable' : `${Math.max(1, Math.round(route.durationSeconds / 60))} min`}` : loading ? 'Calculating Google route…' : error}</Text></View>
       {destination && <Pressable accessibilityRole="button" onPress={() => void Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving`)} style={[styles.navigate, { backgroundColor: c.green }]}><Text style={styles.navigateText}>Navigate</Text></Pressable>}
@@ -72,4 +70,4 @@ function decodePolyline(encoded: string): LatLng[] {
   return points;
 }
 
-const styles = StyleSheet.create({ wrap: { overflow: 'hidden', borderWidth: 1, borderRadius: 15, marginTop: 5 }, map: { height: 220, width: '100%' }, mapFallback: { minHeight: 112, padding: 15, justifyContent: 'center' }, fallbackTitle: { fontSize: 15, fontWeight: '900' }, fallbackCopy: { fontSize: 12, lineHeight: 18, marginTop: 4 }, routeMeta: { minHeight: 52, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, routeCopy: { flex: 1 }, leg: { fontSize: 10, fontWeight: '900', letterSpacing: .8 }, distance: { fontSize: 12, fontWeight: '700', marginTop: 3 }, navigate: { borderRadius: 10, paddingHorizontal: 13, paddingVertical: 10 }, navigateText: { color: 'white', fontSize: 11, fontWeight: '900' }, loader: { position: 'absolute', top: 12, right: 12 } });
+const styles = StyleSheet.create({ wrap: { overflow: 'hidden', borderWidth: 1, borderRadius:0, marginTop: 5 }, map: { height: 220, width: '100%' }, mapFallback: { minHeight: 112, padding: 15, justifyContent: 'center' }, fallbackTitle: { fontSize: 15, fontWeight: '900' }, fallbackCopy: { fontSize: 12, lineHeight: 18, marginTop: 4 }, routeMeta: { minHeight: 52, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, routeCopy: { flex: 1 }, leg: { fontSize: 10, fontWeight: '900', letterSpacing: .8 }, distance: { fontSize: 12, fontWeight: '700', marginTop: 3 }, navigate: { borderRadius:0, paddingHorizontal: 13, paddingVertical: 10 }, navigateText: { color: 'white', fontSize: 11, fontWeight: '900' }, loader: { position: 'absolute', top: 12, right: 12 } });

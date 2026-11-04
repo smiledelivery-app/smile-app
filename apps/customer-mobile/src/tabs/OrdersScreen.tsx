@@ -2,10 +2,11 @@ import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import type { CustomerOrder } from '@makanza/mobile-core';
+import { CancellationReasonModal } from '@makanza/mobile-ui';
 import { ScreenHeader } from '../components/ui';
 import { darkColors, lightColors } from '../theme/colors';
 
-type Props={orders:CustomerOrder[];loading:boolean;error:string;hasAccount:boolean;dark:boolean;onRetry:()=>void;onSignIn:()=>void;onOpen:(order:CustomerOrder)=>void};
+type Props={orders:CustomerOrder[];loading:boolean;error:string;hasAccount:boolean;dark:boolean;onRetry:()=>void;onSignIn:()=>void;onOpen:(order:CustomerOrder)=>void;onCancel:(orderId:string,reason:CancellationReason,details:string)=>void};
 const completedStatuses=new Set(['DELIVERED','REJECTED','CANCELLED','PAYMENT_FAILED','REFUNDED','REFUND_PENDING']);
 const isOngoing=(order:CustomerOrder)=>!completedStatuses.has(order.status);
 const itemCount=(order:CustomerOrder)=>order.items.reduce((total,item)=>total+item.quantity,0);
@@ -14,8 +15,9 @@ function orderStatus(order:CustomerOrder,waitingRider:boolean){
   return ({PENDING_PAYMENT:'Payment pending',CONFIRMED:'Awaiting kitchen',ACCEPTED_BY_VENDOR:'Kitchen confirmed',PREPARING:'Being prepared',READY_FOR_PICKUP:'Ready for pickup',RIDER_ASSIGNED:'Rider assigned',PICKED_UP:'On the way',DELIVERED:'Delivered',REJECTED:'Order rejected',CANCELLED:'Order cancelled',PAYMENT_FAILED:'Payment failed',DELIVERY_EXCEPTION:'Delivery needs attention'} as Record<string,string>)[order.status]??order.status.replaceAll('_',' ').toLowerCase();
 }
 
-export default function OrdersScreen({orders,loading,error,hasAccount,dark,onRetry,onSignIn,onOpen}:Props){
+export default function OrdersScreen({orders,loading,error,hasAccount,dark,onRetry,onSignIn,onOpen,onCancel}:Props){
   const [showHistory,setShowHistory]=useState(false);
+  const [cancelOrderId,setCancelOrderId]=useState<string|null>(null);
   const visibleOrders=orders.filter(order=>showHistory?!isOngoing(order):isOngoing(order));
   return <View style={[s.screen,dark&&s.screenDark]}><ScreenHeader title="Orders" subtitle="Track deliveries and view your history" icon="receipt-outline" colors={dark?darkColors:lightColors}/><ScrollView style={{flex:1}} contentContainerStyle={s.page}>
     <View style={[s.tabs,dark&&s.tabsDark]}>
@@ -32,12 +34,13 @@ export default function OrdersScreen({orders,loading,error,hasAccount,dark,onRet
                 const failed=['REJECTED','CANCELLED','PAYMENT_FAILED','DELIVERY_EXCEPTION'].includes(order.status);
                 const waitingRider=order.status==='READY_FOR_PICKUP'&&['UNASSIGNED','OFFERING'].includes(order.delivery?.status??'');
                 const statusLabel=orderStatus(order,waitingRider);
-                return <Pressable key={order.id} accessibilityRole="button" accessibilityHint={showHistory?'Opens this order receipt and details.':'Opens delivery tracking and order details.'} accessibilityLabel={`${order.vendor?.name??'Kitchen order'}, ${failed?'Needs attention':statusLabel}, ${showHistory?'view order':'track order'}`} onPress={()=>onOpen(order)} style={({pressed})=>[s.card,dark&&s.cardDark,pressed&&s.cardPressed]}>
+                const canCancel=['PENDING_PAYMENT','CONFIRMED','ACCEPTED_BY_VENDOR','PREPARING','READY_FOR_PICKUP','RIDER_ASSIGNED'].includes(order.status);
+                return <View key={order.id}><Pressable accessibilityRole="button" accessibilityHint={showHistory?'Opens this order receipt and details.':'Opens delivery tracking and order details.'} accessibilityLabel={`${order.vendor?.name??'Kitchen order'}, ${failed?'Needs attention':statusLabel}, ${showHistory?'view order':'track order'}`} onPress={()=>onOpen(order)} style={({pressed})=>[s.card,dark&&s.cardDark,pressed&&s.cardPressed]}>
                   <View style={s.row}><View style={s.flex}><Text style={[s.cardTitle,dark&&s.textDark]}>{order.vendor?.name??'Kitchen order'}</Text><Text style={[s.orderNumber,dark&&s.mutedDark]}>ORDER  {order.id.slice(-8)}</Text></View><View style={[s.status,failed&&s.statusError]}><View style={[s.statusDot,failed&&s.statusDotError]}/><Text style={[s.statusText,failed&&s.statusTextError]}>{failed?'Needs attention':statusLabel}</Text></View></View>
                   <Text style={[s.items,dark&&s.mutedDark]} numberOfLines={2}>{order.items.map(item=>`${item.quantity} × ${item.nameSnapshot}`).join(' · ')}</Text>
                   <View style={s.row}><Text style={[s.muted,dark&&s.mutedDark]}>{new Date(order.createdAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})} · {itemCount(order)} {itemCount(order)===1?'item':'items'}</Text><Text style={s.price}>₦{(order.totalMinor/100).toLocaleString('en-NG')}</Text></View>
                   <View style={[s.cardAction,dark&&s.cardActionDark]}><Text style={s.actionText}>{showHistory?'View order details':'Track this order'}</Text><View style={s.actionArrow}><Text style={s.arrowText}>›</Text></View></View>
-                </Pressable>;
+                </Pressable>{canCancel&&!showHistory&&<Pressable accessibilityRole="button" onPress={()=>setCancelOrderId(order.id)} style={{alignSelf:'flex-end',paddingHorizontal:12,paddingVertical:8}}><Text style={{fontSize:12,fontWeight:'800',color:'#a44232'}}>Cancel order</Text></Pressable>}<CancellationReasonModal visible={cancelOrderId===order.id} role="CUSTOMER" dark={dark} onClose={()=>setCancelOrderId(null)} onSubmit={(reason,details)=>{setCancelOrderId(null);onCancel(order.id,reason,details)}}/></View>;
               })}
             </>}
   </ScrollView></View>;

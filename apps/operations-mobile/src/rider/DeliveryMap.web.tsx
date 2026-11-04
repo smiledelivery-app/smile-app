@@ -59,7 +59,7 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
 }
 
 const styles = StyleSheet.create({
-  wrap: { overflow: 'hidden', borderWidth: 1, borderRadius: 15, marginTop: 5 },
+  wrap: { overflow: 'hidden', borderWidth: 1, borderRadius:0, marginTop: 5 },
   mapFallback: { minHeight: 112, padding: 15, justifyContent: 'center' },
   fallbackTitle: { fontSize: 15, fontWeight: '900' },
   fallbackCopy: { fontSize: 12, lineHeight: 18, marginTop: 4 },
@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
   routeCopy: { flex: 1 },
   leg: { fontSize: 10, fontWeight: '900', letterSpacing: .8 },
   distance: { fontSize: 12, fontWeight: '700', marginTop: 3 },
-  navigate: { borderRadius: 10, paddingHorizontal: 13, paddingVertical: 10 },
+  navigate: { borderRadius:0, paddingHorizontal: 13, paddingVertical: 10 },
   navigateText: { color: 'white', fontSize: 11, fontWeight: '900' },
   loader: { position: 'absolute', top: 12, right: 12 },
 });

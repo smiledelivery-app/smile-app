@@ -12,6 +12,15 @@ enum Role {
   VENDOR
   RIDER
   ADMIN
+  SUPER_ADMIN
+  OPERATIONS_MANAGER
+  FINANCE_ADMIN
+  CUSTOMER_SUPPORT
+  VENDOR_MANAGER
+  RIDER_MANAGER
+  MARKETING_MANAGER
+  ANALYST
+  READ_ONLY_ADMIN
 }
 enum VendorStatus {
   DRAFT
@@ -50,6 +59,22 @@ enum RiderOfferStatus {
   REJECTED
   EXPIRED
 }
+enum SupportTicketCategory {
+  CUSTOMER_COMPLAINT
+  VENDOR_COMPLAINT
+  RIDER_COMPLAINT
+  ORDER_DISPUTE
+  REFUND_REQUEST
+  PAYMENT_COMPLAINT
+  DELIVERY_COMPLAINT
+  OTHER
+}
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
 
 model User {
   id           String   @id @default(cuid())
@@ -70,6 +95,9 @@ model User {
   auditLogs    AuditLog[]
   wallet       Wallet?
   walletTransactions WalletTransaction[]
+  supportTicketsAsCustomer SupportTicket[] @relation("SupportTicketCustomer")
+  supportTicketsCreated SupportTicket[] @relation("SupportTicketCreator")
+  supportTicketsAssigned SupportTicket[] @relation("SupportTicketAssignee")
 }
 
 model PendingPhoneSignup {
@@ -121,6 +149,8 @@ model Vendor {
   description String @default("")
   address String
   contactPhone String?
+  openingTime String @default("09:00")
+  closingTime String @default("21:00")
   logoUrl String?
   coverImageUrl String?
   cacNumber String?
@@ -190,6 +220,7 @@ model Order {
   payments Payment[]
   delivery Delivery?
   walletTransactions WalletTransaction[]
+  supportTickets SupportTicket[]
   @@index([customerId,createdAt])
   @@index([vendorId,status])
 }
@@ -255,6 +286,12 @@ model Wallet {
   dvaBankSlug         String?
   dvaId               String?  @unique
   dvaStatus           String   @default("PENDING")
+  payoutAccountLast4  String?
+  payoutAccountName   String?
+  payoutBankName      String?
+  payoutBankCode      String?
+  payoutRecipientCode String?
+  payoutStatus        String   @default("NOT_SET")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   user                User     @relation(fields:[userId], references:[id], onDelete:Cascade)
@@ -269,6 +306,7 @@ model WalletTransaction {
   direction    String
   amountMinor  Int
   balanceAfter Int
+  status       String   @default("SUCCEEDED")
   reference    String   @unique
   orderId      String?
   metadata     Json?
@@ -299,6 +337,15 @@ model RiderProfile {
   status VendorStatus @default(DRAFT)
   available Boolean @default(false)
   vehicleType String?
+  dateOfBirth DateTime?
+  ninCiphertext String?
+  ninDocumentPublicId String?
+  ninDocumentVersion Int?
+  plateNumber String?
+  residentialAddress String?
+  guarantorName String?
+  guarantorNinCiphertext String?
+  guarantorAddress String?
   serviceArea String @default("")
   location RiderLocation?
   offers RiderOffer[]
@@ -362,4 +409,31 @@ model AuditLog {
   actor User @relation(fields:[actorId], references:[id], onDelete:Restrict)
   @@index([actorId,createdAt])
   @@index([targetType,targetId,createdAt])
+}
+
+model SupportTicket {
+  id              String                @id @default(cuid())
+  subject         String
+  description     String
+  category        SupportTicketCategory @default(OTHER)
+  status          SupportTicketStatus   @default(OPEN)
+  resolution      String?
+  isDemo          Boolean               @default(false)
+  customerId      String?
+  orderId         String?
+  createdById     String
+  assignedAdminId String?
+  resolvedAt      DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  customer        User?                 @relation("SupportTicketCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  order           Order?                @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdBy       User                  @relation("SupportTicketCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignedAdmin   User?                 @relation("SupportTicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt])
+  @@index([category, createdAt])
+  @@index([customerId, createdAt])
+  @@index([orderId])
+  @@index([assignedAdminId, status])
 }

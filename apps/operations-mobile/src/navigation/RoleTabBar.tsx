@@ -3,21 +3,23 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import type { AppColors } from '../theme/colors';
 
-export type VendorTab = 'overview' | 'orders' | 'products' | 'account';
-export type RiderTab = 'home' | 'offers' | 'deliveries' | 'account';
+export type VendorTab = 'overview' | 'orders' | 'products' | 'wallet' | 'account';
+export type RiderTab = 'home' | 'offers' | 'deliveries' | 'wallet' | 'account';
 type Tab = VendorTab | RiderTab;
 
-const vendorTabs: { id: VendorTab; label: string; icon: 'home-outline' | 'receipt-outline' | 'cube-outline' | 'person-outline' }[] = [
+const vendorTabs: { id: VendorTab; label: string; icon: 'home-outline' | 'receipt-outline' | 'cube-outline' | 'card-outline' | 'account-outline' }[] = [
   { id: 'overview', label: 'Overview', icon: 'home-outline' },
   { id: 'orders', label: 'Orders', icon: 'receipt-outline' },
   { id: 'products', label: 'Products', icon: 'cube-outline' },
-  { id: 'account', label: 'Account', icon: 'person-outline' },
+  { id: 'wallet', label: 'Wallet', icon: 'card-outline' },
+  { id: 'account', label: 'Account', icon: 'account-outline' },
 ];
-const riderTabs: { id: RiderTab; label: string; icon: 'navigate-outline' | 'flash-outline' | 'map-outline' | 'person-outline' }[] = [
+const riderTabs: { id: RiderTab; label: string; icon: 'navigate-outline' | 'flash-outline' | 'receipt-outline' | 'card-outline' | 'account-outline' }[] = [
   { id: 'home', label: 'Go', icon: 'navigate-outline' },
   { id: 'offers', label: 'Offers', icon: 'flash-outline' },
-  { id: 'deliveries', label: 'Deliveries', icon: 'map-outline' },
-  { id: 'account', label: 'Profile', icon: 'person-outline' },
+  { id: 'deliveries', label: 'Deliveries', icon: 'receipt-outline' },
+  { id: 'wallet', label: 'Wallet', icon: 'card-outline' },
+  { id: 'account', label: 'Profile', icon: 'account-outline' },
 ];
 
 export default function RoleTabBar({ role, active, onSelect, colors }: {
@@ -41,5 +43,5 @@ const styles = StyleSheet.create({
   item: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3 },
   label: { fontSize: 11, fontWeight: '600' },
   active: { fontWeight: '900' },
-  dot: { position: 'absolute', bottom: 3, width: 4, height: 4, borderRadius: 2 },
+  dot: { position: 'absolute', bottom: 3, width: 4, height: 4, borderRadius:0},
 });

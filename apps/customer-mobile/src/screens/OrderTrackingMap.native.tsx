@@ -2,10 +2,9 @@ import { AppText as Text } from '@makanza/mobile-ui';
 import { Bike, LocateFixed, MapPin, Store } from 'lucide-react-native';
 import { useEffect, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
+import MapView, { Marker, type Region } from 'react-native-maps';
 import type { OrderTracking } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
-import { mobileEnv } from '../config/env';
 
 type Props = { tracking: OrderTracking | null; loading: boolean; error: string; colors: AppColors };
 type Coordinate = { latitude: number; longitude: number };
@@ -50,16 +49,16 @@ export default function OrderTrackingMap({ tracking, loading, error, colors: c }
 
   return <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
     <View style={styles.mapFrame}>
-      {mobileEnv.googleMapsEnabled && region ? <MapView ref={map} provider={PROVIDER_GOOGLE} style={StyleSheet.absoluteFill} initialRegion={region} showsCompass={false} showsBuildings showsTraffic={false} toolbarEnabled={false}>
+      {region ? <MapView ref={map} style={StyleSheet.absoluteFill} initialRegion={region} showsCompass={false} showsBuildings showsTraffic={false} toolbarEnabled={false}>
         {vendor && <Marker coordinate={vendor} title={tracking?.vendor.name ?? 'Restaurant'} description="Restaurant pickup"><MarkerBadge icon="store" color={c.green} background={c.card} /></Marker>}
         {customer && <Marker coordinate={customer} title="Delivery address" description="Your delivery destination"><MarkerBadge icon="pin" color="#d36545" background={c.card} /></Marker>}
         {rider && <Marker coordinate={rider} title="Your rider" description={recent ? 'Live location' : 'Last known location'} zIndex={3}><View style={[styles.riderHalo, { backgroundColor: c.isDark ? 'rgba(124,199,160,.2)' : 'rgba(29,97,71,.15)' }]}><MarkerBadge icon="bike" color="#fff" background={c.green} /></View></Marker>}
       </MapView> : <View style={[styles.noMap, { backgroundColor: c.cream }]}>
         <View style={[styles.noMapIcon, { backgroundColor: c.mint }]}><MapPin size={24} color={c.green} /></View>
         <Text style={[styles.noMapTitle, { color: c.ink }]}>Your delivery map</Text>
-        <Text style={[styles.noMapCopy, { color: c.muted }]}>{mobileEnv.googleMapsEnabled ? 'Map pins are not available for this order yet.' : 'Add Google Maps SDK keys and rebuild the app to see the live map.'}</Text>
+        <Text style={[styles.noMapCopy, { color: c.muted }]}>{!region ? 'Map pins are not available for this order yet.' : 'Google Maps SDK keys are missing from this build.'}</Text>
       </View>}
-      {mobileEnv.googleMapsEnabled && region && <>
+      {region && <>
         <View style={[styles.mapTopPill, { backgroundColor: c.card }]}><View style={[styles.liveDot, { backgroundColor: rider && recent ? '#20a36b' : c.muted }]} /><Text style={[styles.mapTopText, { color: c.ink }]}>{rider && recent ? 'LIVE TRACKING' : rider ? 'LAST KNOWN LOCATION' : 'RIDER ON THE WAY'}</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel="Recenter delivery map" onPress={recenter} style={[styles.recenter, { backgroundColor: c.card }]}><LocateFixed size={19} color={c.ink} /></Pressable>
         <View style={[styles.mapCaption, { backgroundColor: c.card }]}><Text style={[styles.captionText, { color: c.ink }]}>{isPickedUp ? 'Heading to you' : 'Going to restaurant'}</Text><Text style={[styles.captionSub, { color: c.muted }]}>{isPickedUp ? 'Your rider has picked up the order' : 'Your rider is heading to the pickup'}</Text></View>

@@ -23,7 +23,7 @@ The API already covered the mobile/web ordering contract, product operations, or
 ## Implemented in this change
 
 - Added Prisma `Wallet`, `WalletTransaction`, and idempotent `PaystackWebhookEvent` records, plus a versioned migration.
-- Registration now creates a wallet. DVA assignment runs asynchronously once an account has email, phone, and Paystack configuration; a profile update or `POST /wallet/dva/retry` can retry it.
+- Registration now creates a wallet. DVA assignment runs asynchronously once a non-demo account has email, phone, and Paystack configuration; customer, vendor, and rider roles share one wallet and one dedicated account per user. Live keys request Paystack-Titan; test keys use Paystack's test provider. A profile read or `POST /wallet/dva/retry` can retry provisioning.
 - Added `GET /wallet`, `POST /wallet/topup/initialize`, `POST /wallet/dva/retry`, and `POST /orders/:id/pay`.
 - Added Paystack transaction initialization, server verification by reference, HMAC SHA-512 signature validation, and duplicate-webhook protection at both `/webhooks/paystack` and `/api/v1/webhooks/paystack`.
 - Real orders remain `PENDING_PAYMENT` until a wallet debit or verified `charge.success`; explicit non-production demo checkout continues unchanged.
@@ -33,4 +33,4 @@ The API already covered the mobile/web ordering contract, product operations, or
 - Existing customer UI currently exposes payment activity rather than the new wallet balance/DVA contract, so `/wallet/transactions` retains its frontend-required payment-history response. A later UI integration should consume `GET /wallet` and the ledger.
 - The apps use foreground polling, not Socket.IO/SSE or push, so realtime remains polling until the mobile clients are equipped for a persistent transport.
 - Paystack payout recipients/transfers, split settlement, refunds, email/phone verification, password-reset delivery, OpenAPI generation, and database-backed integration tests remain future work.
-- Titan DVA availability and required KYC fields are Paystack-account dependent. The API preserves a `PENDING`/`FAILED` state and does not block signup; use a Paystack test account with DVA enabled before enabling the feature for users.
+- Titan DVA availability and required KYC fields are Paystack-account dependent. The API preserves a `PENDING`/`FAILED` state and does not block signup; use a Paystack test account with DVA enabled to validate the flow before production.

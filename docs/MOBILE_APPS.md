@@ -36,6 +36,6 @@ The operations app shares account registration and login with the customer app/w
 
 ## SDK and verification
 
-Both apps pin Expo SDK 55 with React Native 0.83 / React 19.2 as listed in the [Expo SDK 55 compatibility table](https://docs.expo.dev/versions/v55.0.0/). SecureStore is pinned to Expo's [SDK 55 recommended version](https://docs.expo.dev/versions/v55.0.0/sdk/securestore/); Expo Location uses the [SDK 55 recommended version](https://docs.expo.dev/versions/v55.0.0/sdk/location/). Node 20.19+ is required by that SDK; the available environment uses Node 24.
+Both apps use Expo SDK 57 with React Native 0.86 and React 19.2. Their native maps use `react-native-maps`, which is included in Expo Go. Native app builds use the `react-native-maps` config plugin for optional Google Maps SDK keys. Start either app with the workspace script from the repository root.
 
-These source/config files were not installed or built because npm registry access is blocked in this environment. No emulator or device runtime has been verified. Device permission prompts, location behavior, rider acceptance races, and delivery OTP flow still require runtime testing against a migrated development database.
+MapLibre was removed from the mobile apps because Expo Go does not include its native module. Device permission prompts, location behavior, rider acceptance races, and delivery OTP flow still require runtime testing against a migrated development database.
