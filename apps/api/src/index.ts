@@ -1259,7 +1259,7 @@ app.patch('/api/v1/admin/disputes/:ticketId',requireUser,requireAdminPermission(
       if(!admin)return res.status(404).json({error:{code:'ADMIN_NOT_FOUND',message:'The assigned account is not an administrator.'}});
     }
     const result=await prisma.$transaction(async tx=>{
-      const previous=await tx.supportTicket.findFirst({where:{id:ticketId,isDemo:false},select:{id:true,status:true,resolution:true,assignedAdminId:true}});
+      const previous=await tx.supportTicket.findFirst({where:{id:ticketId,isDemo:false},select:{id:true,status:true,resolution:true,assignedAdminId:true,resolvedAt:true}});
       if(!previous)return null;
       const status=input.data.status??previous.status;
       const resolution=input.data.resolution===undefined?previous.resolution:input.data.resolution;
@@ -1267,7 +1267,7 @@ app.patch('/api/v1/admin/disputes/:ticketId',requireUser,requireAdminPermission(
       const assignedAdminId=input.data.assignedAdminId===undefined?previous.assignedAdminId:input.data.assignedAdminId;
       const ticket=await tx.supportTicket.update({
         where:{id:ticketId},
-        data:{status,resolution,assignedAdminId,resolvedAt:status===SupportTicketStatus.RESOLVED||status===SupportTicketStatus.CLOSED?new Date():null},
+        data:{status,resolution,assignedAdminId,resolvedAt:status===SupportTicketStatus.RESOLVED||status===SupportTicketStatus.CLOSED?previous.resolvedAt??new Date():null},
         select:{
           id:true,subject:true,description:true,category:true,status:true,resolution:true,orderId:true,customerId:true,createdAt:true,updatedAt:true,resolvedAt:true,
           customer:{select:{id:true,name:true,email:true,phone:true}},order:{select:{id:true,status:true,totalMinor:true,createdAt:true}},

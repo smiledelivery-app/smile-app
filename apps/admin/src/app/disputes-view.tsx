@@ -33,14 +33,15 @@ const categoryLabel = (value: string) => value.replaceAll('_', ' ').toLowerCase(
 export function DisputesView({ userId, canManage }: { userId: string; canManage: boolean }) {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [message, setMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState(false);
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ['disputes', search, status, page],
-    queryFn: () => api<PageResult>(`/admin/disputes${queryString({ q: search.trim(), status: status || undefined, page, limit: 15 })}`),
+    queryKey: ['disputes', search, status, category, page],
+    queryFn: () => api<PageResult>(`/admin/disputes${queryString({ q: search.trim(), status: status || undefined, category: category || undefined, page, limit: 15 })}`),
   });
   const changed = () => queryClient.invalidateQueries({ queryKey: ['disputes'] });
   const createTicket = useMutation({
@@ -89,7 +90,7 @@ export function DisputesView({ userId, canManage }: { userId: string; canManage:
     <Card className="panel data-panel dispute-list">
       <div className="table-toolbar">
         <label className="search-field"><Search size={16} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search subject, customer, order…" aria-label="Search disputes" /></label>
-        <div className="toolbar-right"><select className="filter-select" value={status} onChange={event => { setStatus(event.target.value); setPage(1); }} aria-label="Filter disputes by status"><option value="">All statuses</option>{statuses.map(value => <option key={value} value={value}>{categoryLabel(value)}</option>)}</select><span className="record-count">{query.data?.total ?? 0} cases</span></div>
+        <div className="toolbar-right"><select className="filter-select" value={status} onChange={event => { setStatus(event.target.value); setPage(1); }} aria-label="Filter disputes by status"><option value="">All statuses</option>{statuses.map(value => <option key={value} value={value}>{categoryLabel(value)}</option>)}</select><select className="filter-select" value={category} onChange={event => { setCategory(event.target.value); setPage(1); }} aria-label="Filter disputes by category"><option value="">All categories</option>{categories.map(value => <option key={value} value={value}>{categoryLabel(value)}</option>)}</select><span className="record-count">{query.data?.total ?? 0} cases</span></div>
       </div>
       {query.isLoading ? <div className="loading-rows" aria-label="Loading"><span /><span /><span /><span /></div>
         : query.error ? <div className="error-state" role="alert">{query.error.message}</div>

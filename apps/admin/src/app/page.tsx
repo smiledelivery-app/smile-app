@@ -136,7 +136,7 @@ export default function AdminPage() {
   const [orderFilters, setOrderFilters] = useState<OrderFilters>(emptyOrderFilters);
   const [notice, setNotice] = useState('');
   const [noticeError, setNoticeError] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
   const notify = (message: string, isError = false) => { setNotice(message); setNoticeError(isError); };
 
   useEffect(() => {
@@ -148,6 +148,7 @@ export default function AdminPage() {
     }).catch(() => { setToken(null); router.replace('/login'); }).finally(() => setReady(true));
   }, [router]);
   useEffect(() => {
+    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -237,7 +238,7 @@ export default function AdminPage() {
       <main className="main-panel">
         <header className="top-header">
           <div className="breadcrumbs"><span>Platform</span><span className="crumb-slash">/</span><strong>{currentLabel}</strong></div>
-          <div className="header-right"><span className="timezone"><span className="status-dot" /> Africa/Lagos</span><span className="header-divider" /><span className="current-time">{new Intl.DateTimeFormat('en-NG', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' }).format(now)}</span><button className="icon-button header-user" title="Administrator"><span className="avatar avatar-small">{(user.userId || 'A').slice(0, 1).toUpperCase()}</span></button></div>
+          <div className="header-right"><span className="timezone"><span className="status-dot" /> Africa/Lagos</span><span className="header-divider" /><span className="current-time">{now ? new Intl.DateTimeFormat('en-NG', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' }).format(now) : '--:--'}</span><button className="icon-button header-user" title="Administrator"><span className="avatar avatar-small">{(user.userId || 'A').slice(0, 1).toUpperCase()}</span></button></div>
         </header>
         <div className="page-content">
           {notice && <div className={`notice-banner ${noticeError ? 'notice-error' : ''}`} role={noticeError ? 'alert' : 'status'}>{noticeError ? <CircleAlert size={16} /> : <Check size={16} />}{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}

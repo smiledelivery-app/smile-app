@@ -18,4 +18,4 @@ Deploy this app to the admin hostname and set `NEXT_PUBLIC_API_URL` to the produ
 
 ## Independent deployment
 
-Build with `pnpm --filter @makanza/admin build` and deploy the standalone Next.js output to the admin hostname. Set `NEXT_PUBLIC_API_URL` at build time to the HTTPS API URL and set `ADMIN_ORIGIN` on the API to the exact HTTPS admin origin. Apply database migrations and generate Prisma Client before deploying API changes. Do not put database credentials or provider secrets in this app's environment.
+Build with `pnpm --filter @makanza/admin build` and deploy the standalone Next.js output to the admin hostname. Set `NEXT_PUBLIC_API_URL` at build time to the HTTPS API URL and set `ADMIN_ORIGIN` on the API to the exact HTTPS admin origin. Apply database migrations (including `202611040004_support_tickets`) and generate Prisma Client before deploying API changes. Do not put database credentials or provider secrets in this app's environment.
