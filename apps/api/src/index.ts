@@ -25,7 +25,17 @@ function piiKey(){const secret=process.env.RIDER_PII_ENCRYPTION_KEY?.trim()||pro
 function encryptRiderNin(value:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',piiKey(),iv);const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${encrypted.toString('base64url')}`;}
 app.disable('x-powered-by');
 app.use(helmet());
-const allowedOrigins = new Set([process.env.WEB_ORIGIN ?? 'http://localhost:3000', process.env.ADMIN_ORIGIN ?? (process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3001')].filter((origin):origin is string=>Boolean(origin)));
+function configuredOrigin(value:string|undefined) {
+  if(!value)return undefined;
+  try{
+    const url=new URL(value.trim());
+    return url.protocol==='https:'||url.protocol==='http:'?url.origin:undefined;
+  }catch{return undefined;}
+}
+const allowedOrigins = new Set([
+  configuredOrigin(process.env.WEB_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3000'),
+  configuredOrigin(process.env.ADMIN_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3001'),
+].filter((origin):origin is string=>Boolean(origin)));
 app.use(cors({ origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)), credentials: true }));
 app.use(express.json({ limit: '1mb',verify:(req,_res,buffer)=>{(req as Request&{rawBody?:Buffer}).rawBody=buffer;} }));
 

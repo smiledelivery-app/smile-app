@@ -31,7 +31,7 @@ export default function LoginPage() {
     } catch (reason) {
       setToken(null);
       if (reason instanceof TypeError) {
-        setError(`The browser could not reach ${apiBaseUrl}. This usually means the API is blocking this admin site's origin. In the API service's Render environment, set ADMIN_ORIGIN=${window.location.origin} (without /login), then redeploy the API. Confirm the admin service has NEXT_PUBLIC_API_URL=${apiBaseUrl} and rebuild it.`);
+        setError(`The browser could not complete a request to ${apiBaseUrl}. The browser does not expose whether this is a CORS rejection, a network problem, or an unavailable API. Check the browser Network panel for the failed request, and verify the API responds to requests from ${window.location.origin}.`);
       } else {
         setError(reason instanceof Error ? reason.message : 'Sign in failed for an unknown reason.');
       }
