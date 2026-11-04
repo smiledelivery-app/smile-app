@@ -242,7 +242,7 @@ export default function AdminPage() {
         <div className="page-content">
           {notice && <div className={`notice-banner ${noticeError ? 'notice-error' : ''}`} role={noticeError ? 'alert' : 'status'}>{noticeError ? <CircleAlert size={16} /> : <Check size={16} />}{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           {view === 'overview' && <OverviewView data={overviewQuery.data} error={overviewQuery.error} loading={overviewQuery.isLoading} period={period} setPeriod={setPeriod} fromDate={fromDate} toDate={toDate} setFromDate={setFromDate} setToDate={setToDate} />}
-          {view !== 'overview' && view !== 'audit' && view !== 'access' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
+          {view !== 'overview' && view !== 'audit' && view !== 'access' && view !== 'disputes' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
           {view === 'audit' && <AuditView query={auditQuery} />}
           {view === 'access' && <AccessView />}
           {view === 'disputes' && <DisputesView userId={user.userId} canManage={user.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OPERATIONS_MANAGER' || role === 'CUSTOMER_SUPPORT')} />}
@@ -322,7 +322,7 @@ function PageHeading({ eyebrow, title, description, children }: { eyebrow: strin
 }
 
 function ListView({ view, query, search, setSearch, statusFilter, setStatusFilter, page, setPage, canReview, runReview, orderFilters, setOrderFilters }: {
-  view: Exclude<View, 'overview' | 'audit' | 'access'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
+  view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
   setSearch: (value: string) => void; statusFilter: string; setStatusFilter: (value: string) => void; page: number; setPage: (page: number) => void;
   orderFilters: OrderFilters; setOrderFilters: (filters: OrderFilters) => void;
   canReview: (permission: 'vendors' | 'riders') => boolean | undefined;
@@ -374,7 +374,7 @@ function OrderFilterBar({ filters, onChange }: { filters: OrderFilters; onChange
   </div>;
 }
 
-function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'access'> }) {
+function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes'> }) {
   const columns: Record<typeof view, string[]> = {
     orders: ['ORDER', 'CUSTOMER', 'VENDOR', 'PLACED', 'STATUS', 'RIDER', 'TOTAL', ''],
     customers: ['CUSTOMER', 'EMAIL', 'PHONE', 'ORDERS', 'ADDRESSES', 'WALLET BALANCE', 'JOINED'],

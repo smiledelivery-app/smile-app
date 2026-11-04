@@ -1212,7 +1212,7 @@ app.post('/api/v1/admin/disputes',requireUser,requireAdminPermission('disputes.m
     subject:z.string().trim().min(4).max(160),description:z.string().trim().min(10).max(5000),
     category:z.nativeEnum(SupportTicketCategory),customerId:z.string().trim().min(1).max(100).optional(),
     orderId:z.string().trim().min(1).max(100).optional(),reason:z.string().trim().min(5).max(500),
-  }).refine(value=>value.customerId||value.orderId,'A customer or order must be linked to the dispute.').safeParse(req.body);
+  }).safeParse(req.body);
   if(!input.success)return res.status(400).json({error:{code:'INVALID_DISPUTE',message:'Enter a valid dispute and link a customer or order.'}});
   const {customerId,orderId}=input.data;
   try{
