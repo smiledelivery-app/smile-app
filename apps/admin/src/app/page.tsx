@@ -2,7 +2,7 @@
 
 import {
   BadgeDollarSign, Bike, Check, ChevronDown, CircleAlert, ClipboardList, CreditCard, LayoutDashboard, LogOut,
-  Search, ShieldCheck, Store, UserCog, Users,
+  MessageSquareWarning, Search, ShieldCheck, Store, UserCog, Users,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -15,11 +15,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AccessView } from '@/app/access-view';
+import { DisputesView } from '@/app/disputes-view';
 import { api, getToken, queryString, setToken } from '@/lib/api';
 
 type Role = 'ADMIN' | 'SUPER_ADMIN' | 'OPERATIONS_MANAGER' | 'FINANCE_ADMIN' | 'CUSTOMER_SUPPORT' | 'VENDOR_MANAGER' | 'RIDER_MANAGER' | 'MARKETING_MANAGER' | 'ANALYST' | 'READ_ONLY_ADMIN';
 type AdminUser = { userId: string; roles: Role[] };
-type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'audit' | 'access';
+type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'disputes' | 'audit' | 'access';
 type Overview = {
   orders: number; completedOrders: number; activeOrders: number; pendingOrders: number; cancelledOrders: number;
   gmvMinor: number; deliveryFeesMinor: number; collectedPaymentsMinor: number; platformRevenueMinor: number | null;
@@ -44,6 +45,7 @@ const routeViews: Record<string, View> = {
   '/vendors': 'vendors',
   '/riders': 'riders',
   '/transactions': 'transactions',
+  '/disputes': 'disputes',
   '/audit': 'audit',
   '/access': 'access',
 };
@@ -54,6 +56,7 @@ const viewRoutes: Record<View, string> = {
   vendors: '/vendors',
   riders: '/riders',
   transactions: '/transactions',
+  disputes: '/disputes',
   audit: '/audit',
   access: '/access',
 };
@@ -64,20 +67,21 @@ const navItems: Array<{ id: View; label: string; icon: typeof LayoutDashboard }>
   { id: 'vendors', label: 'Vendors', icon: Store },
   { id: 'riders', label: 'Riders', icon: Bike },
   { id: 'transactions', label: 'Transactions', icon: CreditCard },
+  { id: 'disputes', label: 'Disputes & resolution', icon: MessageSquareWarning },
   { id: 'audit', label: 'Audit log', icon: ShieldCheck },
   { id: 'access', label: 'Access & sessions', icon: UserCog },
 ];
 const roleCapabilities: Record<Role, View[]> = {
-  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'audit', 'access'],
-  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'audit', 'access'],
-  OPERATIONS_MANAGER: ['overview', 'orders', 'vendors', 'riders'],
+  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access'],
+  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access'],
+  OPERATIONS_MANAGER: ['overview', 'orders', 'vendors', 'riders', 'disputes'],
   FINANCE_ADMIN: ['overview', 'transactions'],
-  CUSTOMER_SUPPORT: ['overview', 'orders', 'customers'],
+  CUSTOMER_SUPPORT: ['overview', 'orders', 'customers', 'disputes'],
   VENDOR_MANAGER: ['overview', 'vendors'],
   RIDER_MANAGER: ['overview', 'riders'],
   MARKETING_MANAGER: ['overview'],
   ANALYST: ['overview', 'orders', 'transactions'],
-  READ_ONLY_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'audit'],
+  READ_ONLY_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit'],
 };
 const money = (minor: number | null | undefined) => minor == null ? '—' : new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(minor / 100);
 const dateLabel = (date: string) => new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(date));
@@ -241,6 +245,7 @@ export default function AdminPage() {
           {view !== 'overview' && view !== 'audit' && view !== 'access' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
           {view === 'audit' && <AuditView query={auditQuery} />}
           {view === 'access' && <AccessView />}
+          {view === 'disputes' && <DisputesView userId={user.userId} canManage={user.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OPERATIONS_MANAGER' || role === 'CUSTOMER_SUPPORT')} />}
         </div>
       </main>
     </div>

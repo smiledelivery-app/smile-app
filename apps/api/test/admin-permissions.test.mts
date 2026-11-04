@@ -13,6 +13,11 @@ test('admin roles receive only their configured permissions', () => {
   assert.equal(hasAdminPermission(['MARKETING_MANAGER'], 'orders.read'), false);
   assert.equal(hasAdminPermission(['ANALYST'], 'finance.read'), true);
   assert.equal(hasAdminPermission(['OPERATIONS_MANAGER'], 'orders.read'), true);
+  assert.equal(hasAdminPermission(['OPERATIONS_MANAGER'], 'disputes.manage'), true);
+  assert.equal(hasAdminPermission(['CUSTOMER_SUPPORT'], 'disputes.manage'), true);
+  assert.equal(hasAdminPermission(['READ_ONLY_ADMIN'], 'disputes.read'), true);
+  assert.equal(hasAdminPermission(['READ_ONLY_ADMIN'], 'disputes.manage'), false);
+  assert.equal(hasAdminPermission(['FINANCE_ADMIN'], 'disputes.read'), false);
   assert.equal(hasAdminPermission(['CUSTOMER'], 'dashboard.read'), false);
 });
 

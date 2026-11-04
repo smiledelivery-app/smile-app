@@ -3,7 +3,7 @@ dotenv.config({path:process.env.ENV_FILE ?? '../../.env'});
 import cors from 'cors';
 import express, { type Request } from 'express';
 import helmet from 'helmet';
-import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOfferStatus, Prisma } from '@prisma/client';
+import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOfferStatus, SupportTicketCategory, SupportTicketStatus, Prisma } from '@prisma/client';
 import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
@@ -1174,6 +1174,119 @@ app.patch('/api/v1/admin/riders/:riderId/status',requireUser,requireAdminPermiss
     });
     return res.json({data});
   }catch(error){if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2025')return res.status(404).json({error:{code:'RIDER_NOT_FOUND',message:'Rider application not found.'}});return next(error);}
+});
+app.get('/api/v1/admin/disputes',requireUser,requireAdminPermission('disputes.read'),async(req,res,next)=>{
+  const input=z.object({q:z.string().trim().max(120).optional(),status:z.nativeEnum(SupportTicketStatus).optional(),category:z.nativeEnum(SupportTicketCategory).optional(),page:z.coerce.number().int().min(1).default(1),limit:z.coerce.number().int().min(1).max(100).default(25)}).safeParse(req.query);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_QUERY',message:'Dispute filters or pagination are invalid.'}});
+  const where:Prisma.SupportTicketWhereInput={
+    isDemo:false,
+    ...(input.data.status?{status:input.data.status}:{}),
+    ...(input.data.category?{category:input.data.category}:{}),
+    ...(input.data.q?{OR:[
+      {id:{contains:input.data.q,mode:'insensitive'}},
+      {subject:{contains:input.data.q,mode:'insensitive'}},
+      {description:{contains:input.data.q,mode:'insensitive'}},
+      {orderId:{contains:input.data.q,mode:'insensitive'}},
+      {customer:{is:{name:{contains:input.data.q,mode:'insensitive'}}}},
+    ]}:{})
+  };
+  try{
+    const [data,total]=await Promise.all([
+      prisma.supportTicket.findMany({
+        where,orderBy:{updatedAt:'desc'},skip:(input.data.page-1)*input.data.limit,take:input.data.limit,
+        select:{
+          id:true,subject:true,description:true,category:true,status:true,resolution:true,orderId:true,customerId:true,createdAt:true,updatedAt:true,resolvedAt:true,
+          customer:{select:{id:true,name:true,email:true,phone:true}},
+          order:{select:{id:true,status:true,totalMinor:true,createdAt:true}},
+          createdBy:{select:{id:true,name:true,email:true}},
+          assignedAdmin:{select:{id:true,name:true,email:true}},
+        }
+      }),
+      prisma.supportTicket.count({where})
+    ]);
+    return res.json({data,total,page:input.data.page,pageSize:input.data.limit});
+  }catch(error){return next(error);}
+});
+app.post('/api/v1/admin/disputes',requireUser,requireAdminPermission('disputes.manage'),async(req:AuthRequest,res,next)=>{
+  const input=z.object({
+    subject:z.string().trim().min(4).max(160),description:z.string().trim().min(10).max(5000),
+    category:z.nativeEnum(SupportTicketCategory),customerId:z.string().trim().min(1).max(100).optional(),
+    orderId:z.string().trim().min(1).max(100).optional(),reason:z.string().trim().min(5).max(500),
+  }).refine(value=>value.customerId||value.orderId,'A customer or order must be linked to the dispute.').safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_DISPUTE',message:'Enter a valid dispute and link a customer or order.'}});
+  const {customerId,orderId}=input.data;
+  try{
+    const linkedOrder=orderId?await prisma.order.findFirst({where:{id:orderId,isDemo:false},select:{id:true,customerId:true}}):null;
+    if(orderId&&!linkedOrder)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'A non-demo order with that ID was not found.'}});
+    if(customerId&&linkedOrder&&linkedOrder.customerId!==customerId)return res.status(400).json({error:{code:'CUSTOMER_ORDER_MISMATCH',message:'The selected customer does not own this order.'}});
+    const resolvedCustomerId=customerId??linkedOrder?.customerId;
+    if(resolvedCustomerId){
+      const customer=await prisma.user.findFirst({where:{id:resolvedCustomerId,isDemo:false,roles:{has:Role.CUSTOMER}},select:{id:true}});
+      if(!customer)return res.status(404).json({error:{code:'CUSTOMER_NOT_FOUND',message:'A non-demo customer with that ID was not found.'}});
+    }
+    const data=await prisma.$transaction(async tx=>{
+      const ticket=await tx.supportTicket.create({
+        data:{
+          subject:input.data.subject,description:input.data.description,category:input.data.category,
+          ...(resolvedCustomerId?{customerId:resolvedCustomerId}:{}),...(orderId?{orderId}:{}),
+          createdById:req.auth!.userId,assignedAdminId:req.auth!.userId,isDemo:false,
+        },
+        select:{
+          id:true,subject:true,description:true,category:true,status:true,resolution:true,orderId:true,customerId:true,createdAt:true,updatedAt:true,resolvedAt:true,
+          customer:{select:{id:true,name:true,email:true,phone:true}},order:{select:{id:true,status:true,totalMinor:true,createdAt:true}},
+          createdBy:{select:{id:true,name:true,email:true}},assignedAdmin:{select:{id:true,name:true,email:true}},
+        },
+      });
+      await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'SUPPORT_TICKET_CREATED',targetType:'SupportTicket',targetId:ticket.id,metadata:{category:ticket.category,orderId:ticket.orderId,customerId:ticket.customerId,reason:input.data.reason},isDemo:false}});
+      return ticket;
+    });
+    return res.status(201).json({data});
+  }catch(error){return next(error);}
+});
+app.patch('/api/v1/admin/disputes/:ticketId',requireUser,requireAdminPermission('disputes.manage'),async(req:AuthRequest,res,next)=>{
+  const ticketId=routeParam(req,'ticketId');
+  const input=z.object({
+    status:z.nativeEnum(SupportTicketStatus).optional(),resolution:z.string().trim().max(5000).nullable().optional(),
+    assignedAdminId:z.string().trim().min(1).max(100).nullable().optional(),reason:z.string().trim().min(5).max(500),
+  }).refine(value=>value.status!==undefined||value.resolution!==undefined||value.assignedAdminId!==undefined,'At least one ticket field must change.')
+    .refine(value=>!['RESOLVED','CLOSED'].includes(value.status??'')||Boolean(value.resolution?.trim()),'A resolution is required to resolve or close a dispute.')
+    .safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_DISPUTE_UPDATE',message:'Choose a valid update; resolved or closed disputes require resolution details.'}});
+  try{
+    if(input.data.assignedAdminId){
+      const adminRoles=[Role.ADMIN,Role.SUPER_ADMIN,Role.OPERATIONS_MANAGER,Role.FINANCE_ADMIN,Role.CUSTOMER_SUPPORT,Role.VENDOR_MANAGER,Role.RIDER_MANAGER,Role.MARKETING_MANAGER,Role.ANALYST,Role.READ_ONLY_ADMIN];
+      const admin=await prisma.user.findFirst({where:{id:input.data.assignedAdminId,roles:{hasSome:adminRoles}},select:{id:true}});
+      if(!admin)return res.status(404).json({error:{code:'ADMIN_NOT_FOUND',message:'The assigned account is not an administrator.'}});
+    }
+    const result=await prisma.$transaction(async tx=>{
+      const previous=await tx.supportTicket.findFirst({where:{id:ticketId,isDemo:false},select:{id:true,status:true,resolution:true,assignedAdminId:true}});
+      if(!previous)return null;
+      const status=input.data.status??previous.status;
+      const resolution=input.data.resolution===undefined?previous.resolution:input.data.resolution;
+      if((status===SupportTicketStatus.RESOLVED||status===SupportTicketStatus.CLOSED)&&!resolution?.trim())throw new Error('DISPUTE_RESOLUTION_REQUIRED');
+      const assignedAdminId=input.data.assignedAdminId===undefined?previous.assignedAdminId:input.data.assignedAdminId;
+      const ticket=await tx.supportTicket.update({
+        where:{id:ticketId},
+        data:{status,resolution,assignedAdminId,resolvedAt:status===SupportTicketStatus.RESOLVED||status===SupportTicketStatus.CLOSED?new Date():null},
+        select:{
+          id:true,subject:true,description:true,category:true,status:true,resolution:true,orderId:true,customerId:true,createdAt:true,updatedAt:true,resolvedAt:true,
+          customer:{select:{id:true,name:true,email:true,phone:true}},order:{select:{id:true,status:true,totalMinor:true,createdAt:true}},
+          createdBy:{select:{id:true,name:true,email:true}},assignedAdmin:{select:{id:true,name:true,email:true}},
+        },
+      });
+      await tx.auditLog.create({data:{
+        actorId:req.auth!.userId,action:'SUPPORT_TICKET_UPDATED',targetType:'SupportTicket',targetId:ticket.id,
+        metadata:{previous:{status:previous.status,resolution:previous.resolution,assignedAdminId:previous.assignedAdminId},next:{status:ticket.status,resolution:ticket.resolution,assignedAdminId:ticket.assignedAdmin?.id??null},reason:input.data.reason},
+        isDemo:false,
+      }});
+      return ticket;
+    });
+    if(!result)return res.status(404).json({error:{code:'DISPUTE_NOT_FOUND',message:'Dispute not found.'}});
+    return res.json({data:result});
+  }catch(error){
+    if(error instanceof Error&&error.message==='DISPUTE_RESOLUTION_REQUIRED')return res.status(400).json({error:{code:'DISPUTE_RESOLUTION_REQUIRED',message:'Add resolution details before resolving or closing a dispute.'}});
+    return next(error);
+  }
 });
 app.get('/api/v1/admin/audit-logs',requireUser,requireAdminPermission('audit.read'),async(req,res,next)=>{
   const input=z.object({cursor:z.string().optional(),limit:z.coerce.number().int().min(1).max(100).default(50)}).safeParse(req.query);if(!input.success)return res.status(400).json({error:{code:'INVALID_QUERY',message:'Audit-log pagination is invalid.'}});
