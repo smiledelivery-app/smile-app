@@ -32,9 +32,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     cache: 'no-store',
   });
   if (response.status === 204) return undefined as T;
-  const body = await response.json().catch(() => null) as { data?: T; error?: { message?: string } } | null;
+  const body = await response.json().catch(() => null) as {
+    data?: T;
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    error?: { message?: string };
+  } | null;
   if (!response.ok) throw new ApiError(body?.error?.message ?? 'The request could not be completed.', response.status);
   if (!body || !('data' in body)) throw new ApiError('The API returned an invalid response.', response.status);
+  if (Array.isArray(body.data) && typeof body.total === 'number' && typeof body.page === 'number' && typeof body.pageSize === 'number') {
+    return body as T;
+  }
   return body.data as T;
 }
 
