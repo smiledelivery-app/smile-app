@@ -8,6 +8,7 @@ const publicPaths = [
   '/faq',
   '/riders',
   '/vendors',
+  '/privacy',
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

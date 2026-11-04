@@ -4,6 +4,7 @@ import { MarketingPage } from '../marketing';
 export const metadata: Metadata = {
   title: 'Partner with Smile',
   description: 'Bring your kitchen or local business to more people by partnering with Smile.',
+  alternates: { canonical: '/vendors' },
 };
 
 export default function VendorsPage(){return <MarketingPage kind="vendors"/>}

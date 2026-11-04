@@ -3,28 +3,29 @@ import { siteUrl } from '../lib/site';
 import './styles.css';
 import './marketing.css';
 
-const description = 'Discover local kitchens and everyday essentials around you with Smile.';
+const description = 'Smile Delivery brings smile food delivery in Lagos to your door. Order food, groceries and everyday essentials from local businesses.';
 
 export const metadata: Metadata = {
   metadataBase: siteUrl,
   title: {
-    default: 'Smile — good food, on your time',
+    default: 'Smile Delivery | Food Delivery in Lagos',
     template: '%s | Smile',
   },
   description,
+  keywords: ['Smile', 'Smile Delivery', 'Smile food', 'Smile food delivery', 'food delivery in Lagos'],
   applicationName: 'Smile',
   alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     siteName: 'Smile',
-    title: 'Smile — good food, on your time',
+    title: 'Smile Delivery | Food Delivery in Lagos',
     description,
     url: '/',
     images: ['/smile-logo.png'],
   },
   twitter: {
     card: 'summary',
-    title: 'Smile — good food, on your time',
+    title: 'Smile Delivery | Food Delivery in Lagos',
     description,
     images: ['/smile-logo.png'],
   },
