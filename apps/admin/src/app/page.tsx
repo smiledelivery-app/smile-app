@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  BadgeDollarSign, Bike, Check, ChevronDown, CircleAlert, ClipboardList, CreditCard, LayoutDashboard, LogOut,
+  BadgeDollarSign, Bike, BellRing, Check, ChevronDown, CircleAlert, ClipboardList, CreditCard, LayoutDashboard, LogOut,
   MessageSquareWarning, Search, ShieldCheck, Store, UserCog, Users,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
@@ -16,11 +16,12 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AccessView } from '@/app/access-view';
 import { DisputesView } from '@/app/disputes-view';
+import { NotificationsView } from '@/app/notifications-view';
 import { api, getToken, queryString, setToken } from '@/lib/api';
 
 type Role = 'ADMIN' | 'SUPER_ADMIN' | 'OPERATIONS_MANAGER' | 'FINANCE_ADMIN' | 'CUSTOMER_SUPPORT' | 'VENDOR_MANAGER' | 'RIDER_MANAGER' | 'MARKETING_MANAGER' | 'ANALYST' | 'READ_ONLY_ADMIN';
 type AdminUser = { userId: string; roles: Role[] };
-type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'disputes' | 'audit' | 'access';
+type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'disputes' | 'audit' | 'access' | 'notifications';
 type Overview = {
   orders: number; completedOrders: number; activeOrders: number; pendingOrders: number; cancelledOrders: number;
   gmvMinor: number; deliveryFeesMinor: number; collectedPaymentsMinor: number; platformRevenueMinor: number | null;
@@ -48,6 +49,7 @@ const routeViews: Record<string, View> = {
   '/disputes': 'disputes',
   '/audit': 'audit',
   '/access': 'access',
+  '/notifications': 'notifications',
 };
 const viewRoutes: Record<View, string> = {
   overview: '/',
@@ -59,6 +61,7 @@ const viewRoutes: Record<View, string> = {
   disputes: '/disputes',
   audit: '/audit',
   access: '/access',
+  notifications: '/notifications',
 };
 const navItems: Array<{ id: View; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -70,10 +73,11 @@ const navItems: Array<{ id: View; label: string; icon: typeof LayoutDashboard }>
   { id: 'disputes', label: 'Disputes & resolution', icon: MessageSquareWarning },
   { id: 'audit', label: 'Audit log', icon: ShieldCheck },
   { id: 'access', label: 'Access & sessions', icon: UserCog },
+  { id: 'notifications', label: 'Push notifications', icon: BellRing },
 ];
 const roleCapabilities: Record<Role, View[]> = {
-  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access'],
-  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access'],
+  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access', 'notifications'],
+  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access', 'notifications'],
   OPERATIONS_MANAGER: ['overview', 'orders', 'vendors', 'riders', 'disputes'],
   FINANCE_ADMIN: ['overview', 'transactions'],
   CUSTOMER_SUPPORT: ['overview', 'orders', 'customers', 'disputes'],
@@ -243,10 +247,11 @@ export default function AdminPage() {
         <div className="page-content">
           {notice && <div className={`notice-banner ${noticeError ? 'notice-error' : ''}`} role={noticeError ? 'alert' : 'status'}>{noticeError ? <CircleAlert size={16} /> : <Check size={16} />}{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           {view === 'overview' && <OverviewView data={overviewQuery.data} error={overviewQuery.error} loading={overviewQuery.isLoading} period={period} setPeriod={setPeriod} fromDate={fromDate} toDate={toDate} setFromDate={setFromDate} setToDate={setToDate} />}
-          {view !== 'overview' && view !== 'audit' && view !== 'access' && view !== 'disputes' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
+          {view !== 'overview' && view !== 'audit' && view !== 'access' && view !== 'disputes' && view !== 'notifications' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
           {view === 'audit' && <AuditView query={auditQuery} />}
           {view === 'access' && <AccessView />}
           {view === 'disputes' && <DisputesView userId={user.userId} canManage={user.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OPERATIONS_MANAGER' || role === 'CUSTOMER_SUPPORT')} />}
+          {view === 'notifications' && <NotificationsView />}
         </div>
       </main>
     </div>
@@ -323,7 +328,7 @@ function PageHeading({ eyebrow, title, description, children }: { eyebrow: strin
 }
 
 function ListView({ view, query, search, setSearch, statusFilter, setStatusFilter, page, setPage, canReview, runReview, orderFilters, setOrderFilters }: {
-  view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
+  view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes' | 'notifications'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
   setSearch: (value: string) => void; statusFilter: string; setStatusFilter: (value: string) => void; page: number; setPage: (page: number) => void;
   orderFilters: OrderFilters; setOrderFilters: (filters: OrderFilters) => void;
   canReview: (permission: 'vendors' | 'riders') => boolean | undefined;
@@ -375,7 +380,7 @@ function OrderFilterBar({ filters, onChange }: { filters: OrderFilters; onChange
   </div>;
 }
 
-function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes'> }) {
+function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes' | 'notifications'> }) {
   const columns: Record<typeof view, string[]> = {
     orders: ['ORDER', 'CUSTOMER', 'VENDOR', 'PLACED', 'STATUS', 'RIDER', 'TOTAL', ''],
     customers: ['CUSTOMER', 'EMAIL', 'PHONE', 'ORDERS', 'ADDRESSES', 'WALLET BALANCE', 'JOINED'],

@@ -18,30 +18,25 @@ Customer and operations Expo apps use the shared API. The operations app has sep
 ## Local setup
 
 1. Copy `.env.example` to `.env`.
-2. Set a local PostgreSQL `DATABASE_URL` and `DEMO_PASSWORD` (at least 12 characters, development only).
+2. Set a local PostgreSQL `DATABASE_URL` and `DEMO_PASSWORD` (development only).
 3. Install dependencies with `pnpm install`.
 4. Generate Prisma client and apply the migration: `pnpm db:generate`, then `pnpm db:migrate:dev`.
 5. Add demo records: `pnpm db:seed:demo`.
 6. Start the API and web app: `pnpm dev`.
 7. Open `http://localhost:3000`; API health and database readiness are at `/api/v1/health` and `/api/v1/ready` on port 4100.
 
-Demo sign-in after seeding:
+Demo sign-in after seeding, in the customer app and the vendor/rider operations app:
 
-- Customer: `customer.demo@makanza.example`
-- Vendors: `vendor1.demo@makanza.example` through `vendor4.demo@makanza.example`
-- Password: the local `DEMO_PASSWORD` value
+- Email: `smile@gmail.com`
+- Password: `smile2026@@` (set `DEMO_PASSWORD` to this value before seeding)
 
-Vendors sign in through the shared operations account form; an account with the `VENDOR` role sees the Kitchen desk. Vendor applications can be submitted on the web landing page. Product create/update/archive routes are implemented but do not yet have a product editor UI.
-
-Demo rider: `rider.demo@makanza.example`, password from `DEMO_PASSWORD`. Rider profiles are approved/online in the demo seed and have one tagged current location; actual device location uses foreground permissions in the operations app.
-
-Demo administrator: `admin.demo@makanza.example`, password from `DEMO_PASSWORD`. The protected admin view currently covers platform counts and vendor/rider application review, with API audit records. It is an initial operations slice, not the full requested administration suite.
+This test user has customer, vendor, and rider roles. In non-production environments, only this authenticated account can see tagged demo records and use mock checkout on demo vendors, even when `DEMO_MODE=false`. Seed the records using `DEMO_MODE=true`; afterward, this account's demo features do not require the global demo flag. Checkout at real vendors is never mocked. Other demo accounts from older seeds can no longer sign in. The admin app continues to require a separately provisioned administrator account.
 
 ## Database and demo data safety
 
 - `pnpm db:migrate:dev` creates/applies versioned development migrations.
 - `pnpm db:migrate:deploy` applies migrations in a deployment environment.
-- `pnpm db:seed:demo` requires `DEMO_MODE=true`, refuses production, and adds/upserts tagged demo users, vendors, products, and a demo customer address. It never deletes records.
+- `pnpm db:seed:demo` requires `DEMO_MODE=true`, refuses production, and adds/upserts the tagged multi-role test user, vendors, products, rider profile/location, wallet, and customer address. It never deletes records.
 - Keep demo data in a dedicated development database. Do not run the demo seed in production.
 - Demo orders and payment records are tagged and use a development-only mock. No money is charged or transferred.
 - Demo catalog records are filtered out whenever `NODE_ENV=production` or demo mode is off.

@@ -12,7 +12,7 @@ Expo and React Native customer application.
    - To display the native rider-tracking map, configure restricted `GOOGLE_MAPS_ANDROID_API_KEY` and `GOOGLE_MAPS_IOS_API_KEY` values and set `EXPO_PUBLIC_GOOGLE_MAPS_ENABLED=true`, then rebuild the native app. See [Google Maps setup](../../docs/GOOGLE_MAPS.md).
 3. Start the API, then run `pnpm --filter @makanza/customer-mobile start`.
 
-With `EXPO_PUBLIC_API_URL` configured, the customer app requests vendors, menus, order history, wallet details, and payment activity from the API. The existing sample catalog, menus, orders, and wallet preview remain visible while those requests load or when the API cannot be reached. A successful API response replaces the matching sample data, including an empty response. API-backed orders require a customer session.
+The customer app loads catalog, menus, orders, wallet details, and payment activity from the API. It requires sign-in; API errors and empty responses are shown rather than replaced with local fixtures. API-backed orders require a customer session.
 
 ## Source layout
 
@@ -30,4 +30,4 @@ Use `.env.example` as the safe template; never commit `.env` or place private cr
 
 ## EAS
 
-Build profiles live in `eas.json`; `.easignore` excludes local dependencies, Expo cache, and private env files. Configure the API URL in the EAS build environment for each profile.
+Build profiles live in `eas.json`; `.easignore` excludes local dependencies, Expo cache, and private env files. Set `EXPO_PUBLIC_API_URL` in the EAS `preview` environment to the isolated staging API before building a preview; never point the demo test account at production.

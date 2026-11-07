@@ -37,7 +37,9 @@ export function createApiClient(baseUrl:string) {
   };
 }
 
-export type Session = { token:string; expiresAt:string; user:{id:string;name:string;email:string|null;phone?:string|null;roles:string[]} };
+export type Session = { token:string; expiresAt:string; user:{id:string;name:string;email:string|null;phone?:string|null;roles:string[];isDemo?:boolean} };
+export type NotificationInboxItem = {id:string;title:string;body:string;type:string;orderId:string|null;readAt:string|null;createdAt:string};
+export type NotificationInbox = {items:NotificationInboxItem[];unreadCount:number};
 export type Vendor = {id:string;name:string;cuisine:string;neighborhood:string;eta:string;fee:number;rating:number|null;image:string;open:boolean;demo:boolean;latitude?:number|null;longitude?:number|null};
 export type ProductAddon = {id:string;productId:string;name:string;priceMinor:number;available:boolean};
 export type Product = {id:string;name:string;description:string;category:string;priceMinor:number;imageUrl:string|null;stock:number|null;addons?:ProductAddon[]};

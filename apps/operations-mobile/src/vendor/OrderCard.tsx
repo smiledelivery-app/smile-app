@@ -1,6 +1,6 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { VendorOrder } from '@makanza/mobile-core';
 import FormField from '../components/FormField';
 import { CancellationReasonModal, type CancellationReason } from '@makanza/mobile-ui';
@@ -10,11 +10,7 @@ export default function OrderCard({order,busy,dark,onAction,onVerifyPickup,onCan
   const [pickupCode,setPickupCode]=useState('');
   const [cancelOpen,setCancelOpen]=useState(false);
   const next=order.status==='CONFIRMED'?['Accept order','ACCEPTED_BY_VENDOR']:order.status==='ACCEPTED_BY_VENDOR'?['Start preparing','PREPARING']:order.status==='PREPARING'?['Ready for pickup','READY_FOR_PICKUP']:null;
-  const decline=()=>Alert.alert('Decline this order?','Choose a reason to share with the customer.',[
-    {text:'Cancel',style:'cancel'},
-    {text:'Not available',onPress:()=>onAction(order.id,'REJECTED','NOT_AVAILABLE')},
-    {text:'Out of stock',style:'destructive',onPress:()=>onAction(order.id,'REJECTED','OUT_OF_STOCK')},
-  ]);
+  const decline=()=>{if(Platform.OS==='web'){const reason=window.prompt('Reason: enter NOT_AVAILABLE or OUT_OF_STOCK','NOT_AVAILABLE');if(reason==='NOT_AVAILABLE'||reason==='OUT_OF_STOCK')onAction(order.id,'REJECTED',reason);return;}Alert.alert('Decline this order?','Choose a reason to share with the customer.',[{text:'Cancel',style:'cancel'},{text:'Not available',onPress:()=>onAction(order.id,'REJECTED','NOT_AVAILABLE')},{text:'Out of stock',style:'destructive',onPress:()=>onAction(order.id,'REJECTED','OUT_OF_STOCK')}]);};
   const statusLabel=order.status==='PICKED_UP'?'On the way':order.status.replaceAll('_',' ').toLowerCase();
   return <View style={[s.card,dark&&s.cardDark]}>
     <View style={s.row}><Text style={[s.id,dark&&s.lightText]}>Order {order.id.slice(-8)}</Text><Text style={s.status}>{statusLabel}</Text></View>

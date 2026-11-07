@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
@@ -29,6 +30,7 @@ export function AccessView() {
   const [notice, setNotice] = useState('');
   const [noticeError, setNoticeError] = useState(false);
   const [roleDrafts, setRoleDrafts] = useState<Record<string, Role[]>>({});
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const notify = (message: string, isError = false) => { setNotice(message); setNoticeError(isError); };
   const admins = useQuery({ queryKey: ['admin-accounts'], queryFn: () => api<AdminAccount[]>('/admin/admins') });
   const sessions = useQuery({ queryKey: ['admin-sessions'], queryFn: () => api<AdminSession[]>('/admin/sessions') });
@@ -75,7 +77,7 @@ export function AccessView() {
         <form className="admin-create-form" onSubmit={onSubmit} noValidate>
           <label>Name<input {...register('name')} autoComplete="name" />{errors.name && <span className="field-error">{errors.name.message}</span>}</label>
           <label>Work email<input {...register('email')} type="email" autoComplete="email" />{errors.email && <span className="field-error">{errors.email.message}</span>}</label>
-          <label>Initial password<input {...register('password')} type="password" autoComplete="new-password" />{errors.password && <span className="field-error">{errors.password.message}</span>}</label>
+          <label>Initial password<div className="password-input-wrap"><input {...register('password')} type={passwordVisible ? 'text' : 'password'} autoComplete="new-password" /><button type="button" className="password-visibility" aria-label={passwordVisible ? 'Hide password' : 'Show password'} aria-pressed={passwordVisible} onClick={() => setPasswordVisible(value => !value)}>{passwordVisible ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>{errors.password && <span className="field-error">{errors.password.message}</span>}</label>
           <label>Role<select {...register('role')}>{roleOptions.map(role => <option key={role} value={role}>{labelRole(role)}</option>)}</select>{errors.role && <span className="field-error">{errors.role.message}</span>}</label>
           <label>Reason<input {...register('reason')} placeholder="Why is this access needed?" />{errors.reason && <span className="field-error">{errors.reason.message}</span>}</label>
           <Button type="submit" disabled={isSubmitting || createAdmin.isPending}>Create account</Button>

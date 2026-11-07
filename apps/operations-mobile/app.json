@@ -5,11 +5,36 @@
     "scheme": "smile-ops",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "androidStatusBar": { "barStyle": "dark-content", "backgroundColor": "#ffffff", "translucent": false },
     "newArchEnabled": true,
-    "plugins": ["expo-secure-store", ["expo-location", { "locationWhenInUsePermission": "Smile uses your location while you are online or completing an assigned delivery." }], ["expo-image-picker", { "photosPermission": "Smile lets you choose store and product photos." }]],
-    "ios": { "supportsTablet": true, "bundleIdentifier": "ng.smile.operations" },
-    "android": { "package": "ng.smile.operations", "adaptiveIcon": { "backgroundColor": "#194c3a" } }
+    "plugins": [
+      ["expo-splash-screen", {
+        "image": "./assets/splash-icon.png",
+        "imageWidth": 200,
+        "resizeMode": "contain",
+        "backgroundColor": "#228B22",
+        "dark": {
+          "image": "./assets/splash-icon.png",
+          "backgroundColor": "#0A120E"
+        }
+      }],
+      "expo-secure-store",
+      ["expo-location", { "locationWhenInUsePermission": "Smile uses your location while you are online or completing an assigned delivery." }],
+      ["expo-image-picker", { "photosPermission": "Smile lets you choose store and product photos." }],
+      ["expo-notifications", { "color": "#228B22" }]
+    ],
+    "ios": { "supportsTablet": true, "bundleIdentifier": "ng.smile.operations", "icon": "./assets/icon.png" },
+    "android": {
+      "package": "ng.smile.operations",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "backgroundColor": "#228B22"
+      }
+    },
+    "web": { "bundler": "metro", "favicon": "./assets/favicon.png" }
   }
 }

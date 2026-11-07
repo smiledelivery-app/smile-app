@@ -8,6 +8,7 @@ import { api } from '../services/api';
 import FormField from '../components/FormField';
 import PrimaryButton from '../components/PrimaryButton';
 import StoreMediaPicker from './StoreMediaPicker';
+import { appendMediaAsset } from '../utils/upload-media';
 
 export type VendorProfile={id:string;name:string;ownerName:string;description:string;address:string;contactPhone:string|null;openingTime:string;closingTime:string;logoUrl:string|null;coverImageUrl:string|null;cacNumber:string|null;cacDocumentUrl:string|null;latitude:number|string|null;longitude:number|string|null;status:string;isOpen:boolean};
 
@@ -30,7 +31,7 @@ export function VendorStoreProfileForm({token,profile,authorized,colors,onAuthor
       setMediaBusy(kind);
       const signature=await api.post<UploadSignature>('/vendor/media/sign',{},token);
       const data=new FormData();
-      data.append('file',{uri:asset.uri,name:asset.fileName??`${kind}-${Date.now()}.jpg`,type:asset.mimeType??'image/jpeg'} as unknown as Blob);
+      await appendMediaAsset(data,asset,`${kind}-${Date.now()}.jpg`);
       data.append('api_key',signature.apiKey);data.append('timestamp',String(signature.timestamp));data.append('folder',signature.folder);data.append('signature',signature.signature);
       const response=await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(signature.cloudName)}/image/upload`,{method:'POST',body:data});
       const uploaded=await response.json().catch(()=>null) as {secure_url?:string;error?:{message?:string}}|null;

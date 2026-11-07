@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import Image from 'next/image';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { ArrowRight, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ type Credentials = z.infer<typeof schema>;
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>({ resolver: zodResolver(schema) });
 
   const onSubmit = async (values: Credentials) => {
@@ -51,7 +52,7 @@ export default function LoginPage() {
           <input id="email" autoComplete="username" type="email" placeholder="you@company.com" {...register('email')} />
           {errors.email && <span className="field-error">{errors.email.message}</span>}
           <label htmlFor="password">Password</label>
-          <input id="password" autoComplete="current-password" type="password" placeholder="Your password" {...register('password')} />
+          <div className="password-input-wrap"><input id="password" autoComplete="current-password" type={passwordVisible ? 'text' : 'password'} placeholder="Your password" {...register('password')} /><button type="button" className="password-visibility" aria-label={passwordVisible ? 'Hide password' : 'Show password'} aria-pressed={passwordVisible} onClick={() => setPasswordVisible(value => !value)}>{passwordVisible ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
           {errors.password && <span className="field-error">{errors.password.message}</span>}
           {error && <div role="alert" className="error-banner">{error}</div>}
           <Button className="button button-primary login-submit" disabled={isSubmitting}>

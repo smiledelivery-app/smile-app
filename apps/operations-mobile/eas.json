@@ -1,9 +1,9 @@
 {
   "cli": { "version": ">= 16.0.0", "appVersionSource": "remote" },
   "build": {
-    "development": { "developmentClient": false, "distribution": "internal", "channel": "development" },
-    "preview": { "distribution": "internal", "channel": "preview" },
-    "production": { "autoIncrement": true, "channel": "production" }
+    "development": { "developmentClient": false, "distribution": "internal", "channel": "development", "env": { "EXPO_PUBLIC_EAS_PROJECT_ID": "9b018d6b-6690-4a42-8c6a-c553fcb49119", "EXPO_PUBLIC_API_URL": "https://smile-backend-2den.onrender.com/api/v1", "EXPO_PUBLIC_ENABLE_PUSH": "true" } },
+    "preview": { "distribution": "internal", "channel": "preview", "environment": "preview", "env": { "EXPO_PUBLIC_EAS_PROJECT_ID": "9b018d6b-6690-4a42-8c6a-c553fcb49119", "EXPO_PUBLIC_ENABLE_PUSH": "true" } },
+    "production": { "autoIncrement": true, "channel": "production", "env": { "EXPO_PUBLIC_EAS_PROJECT_ID": "9b018d6b-6690-4a42-8c6a-c553fcb49119", "EXPO_PUBLIC_API_URL": "https://smile-backend-2den.onrender.com/api/v1", "EXPO_PUBLIC_ENABLE_PUSH": "true" } }
   },
   "submit": { "production": {} }
 }

@@ -1,7 +1,7 @@
 import { AppTextInput as TextInput } from '@makanza/mobile-ui';
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import type { Session, Vendor } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
@@ -84,10 +84,11 @@ export function DeleteAccountScreen({token,colors,onBack,onDeleted}:{token:strin
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const s=styles(colors);
-  const confirm=()=>Alert.alert('Delete your Smile account?', 'Your contact details and saved addresses will be removed. Existing order records may be retained for operational and legal purposes. This cannot be undone.',[
-    {text:'Keep account',style:'cancel'},
-    {text:'Delete account',style:'destructive',onPress:()=>void remove()},
-  ]);
+  const confirm=()=>{
+    const message='Your contact details and saved addresses will be removed. Existing order records may be retained for operational and legal purposes. This cannot be undone.';
+    if(Platform.OS==='web'){if(window.confirm(`Delete your Smile account?\n\n${message}`))void remove();return;}
+    Alert.alert('Delete your Smile account?',message,[{text:'Keep account',style:'cancel'},{text:'Delete account',style:'destructive',onPress:()=>void remove()}]);
+  };
   const remove=async()=>{
     setError('');
     if(!password){setError('Enter your password to continue.');return;}
@@ -116,7 +117,8 @@ function Header({title,colors,onBack}:{title:string;colors:AppColors;onBack:()=>
 
 function Field({label,value,onChangeText,colors,keyboardType,secureTextEntry}:{label:string;value:string;onChangeText:(value:string)=>void;colors:AppColors;keyboardType?:'phone-pad';secureTextEntry?:boolean}){
   const s=styles(colors);
-  return <View style={s.field}><Text style={s.label}>{label}</Text><TextInput value={value} onChangeText={onChangeText} keyboardType={keyboardType} secureTextEntry={secureTextEntry} autoCapitalize={secureTextEntry?'none':'words'} style={s.input}/></View>;
+  const [visible,setVisible]=useState(false);
+  return <View style={s.field}><Text style={s.label}>{label}</Text><View><TextInput value={value} onChangeText={onChangeText} keyboardType={keyboardType} secureTextEntry={secureTextEntry&&!visible} autoCapitalize={secureTextEntry?'none':'words'} style={[s.input,secureTextEntry&&{paddingRight:48}]}/>{secureTextEntry&&<Pressable accessibilityRole="button" accessibilityLabel={`${visible?'Hide':'Show'} ${label.toLowerCase()}`} onPress={()=>setVisible(current=>!current)} style={{position:'absolute',right:7,top:0,bottom:0,width:38,alignItems:'center',justifyContent:'center'}}><Ionicons name={visible?'eye-off-outline':'eye-outline'} size={19} color={colors.muted}/></Pressable>}</View></View>;
 }
 
 const styles=(c:AppColors)=>StyleSheet.create({

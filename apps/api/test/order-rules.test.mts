@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { calculateOrderAmounts, canVendorTransition } from '../src/order-rules.ts';
-import { catalogSource } from '../src/catalog-rules.ts';
+import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from '../src/catalog-rules.ts';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from '../src/dispatch-rules.ts';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from '../src/google-maps.ts';
 import { createProofCode } from '../src/proof-codes.ts';
@@ -31,10 +31,17 @@ test('checkout multiplies per-item addon quantities and menu item quantities in 
   assert.throws(()=>calculateOrderAmounts([{priceMinor:50_000,quantity:1,addons:[{priceMinor:0,quantity:1}]}],80),RangeError);
 });
 
-test('real catalog records always take precedence over development demo records',()=>{
-  assert.equal(catalogSource(4,true),'database');
-  assert.equal(catalogSource(0,true),'development-demo');
-  assert.equal(catalogSource(0,false),'database');
+test('only the Smile test account accesses demo features outside production, independent of global demo mode',()=>{
+  assert.equal(canAccessDemoFeatures('smile@gmail.com',true,'staging'),true);
+  assert.equal(canAccessDemoFeatures('smile@gmail.com',true,undefined),true);
+  assert.equal(canAccessDemoFeatures('other@example.com',true,'staging'),false);
+  assert.equal(canAccessDemoFeatures('smile@gmail.com',false,'staging'),false);
+  assert.equal(canAccessDemoFeatures('smile@gmail.com',true,'production'),false);
+  assert.equal(catalogSource(true),'development-demo');
+  assert.equal(catalogSource(false),'database');
+  assert.equal(shouldUseMockCheckout(true,true),true);
+  assert.equal(shouldUseMockCheckout(true,false),false);
+  assert.equal(shouldUseMockCheckout(false,true),false);
 });
 
 test('rider dispatch uses pickup proximity, service area, prior offers, and nearest-first limits',()=>{

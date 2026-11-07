@@ -7,7 +7,7 @@ import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOff
 import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
-import { catalogSource } from './catalog-rules.js';
+import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
 import { drivingRoute, geocode, GoogleMapsError, mapProvider, MapServiceError, routeDistances } from './map-provider.js';
 import { createProofCode } from './proof-codes.js';
@@ -15,12 +15,44 @@ import { createRiderNinUploadSignature, createVendorImageUploadSignature, MediaP
 import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
 import { checkPhoneVerification, PhoneVerificationError, sendPhoneVerification, type PhoneVerificationChannel } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
+import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
 
 const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.API_PORT ?? 4100);
-const demoMode = process.env.DEMO_MODE === 'true' && process.env.NODE_ENV !== 'production';
 const phoneVerificationBypass = process.env.PHONE_VERIFICATION_BYPASS === 'true' && process.env.NODE_ENV !== 'production';
+const vendorNotificationStatuses: OrderStatus[] = [OrderStatus.CONFIRMED,OrderStatus.CANCELLED,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP];
+async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipientUserId?:string) {
+  const order=await prisma.order.findUnique({
+    where:{id:orderId},
+    select:{id:true,isDemo:true,customerId:true,vendor:{select:{id:true,name:true,ownerId:true}},delivery:{select:{assignedRider:{select:{userId:true}}}}},
+  });
+  if(!order||order.isDemo)return;
+  const message=notificationCopy(status,order.id,order.vendor.name);
+  const recipients=new Set<string>([order.customerId]);
+  if(vendorNotificationStatuses.includes(status))recipients.add(order.vendor.ownerId);
+  if(status===OrderStatus.RIDER_ASSIGNED&&order.delivery?.assignedRider)recipients.add(order.delivery.assignedRider.userId);
+  if(extraRecipientUserId)recipients.add(extraRecipientUserId);
+  const inputs:NotificationInput[]=[...recipients].map(userId=>{
+    const isVendor=userId===order.vendor.ownerId;
+    const isRider=userId===order.delivery?.assignedRider?.userId||userId===extraRecipientUserId&&status===OrderStatus.CANCELLED;
+    const copy=status===OrderStatus.CONFIRMED&&isVendor
+      ?{title:'New customer order',body:`${order.vendor.name} received order #${order.id.slice(-8).toUpperCase()}.`}
+      :status===OrderStatus.CANCELLED&&isVendor
+        ?{title:'Order cancelled',body:`Order #${order.id.slice(-8).toUpperCase()} was cancelled.`}
+        :status===OrderStatus.RIDER_ASSIGNED&&(isVendor||isRider)
+          ?{title:isRider?'New delivery assigned':'Rider coming to pick up',body:`A rider is on the way to ${order.vendor.name} for order #${order.id.slice(-8).toUpperCase()}.`}
+          :message;
+    return {
+      userId,title:copy.title,body:copy.body,type:`ORDER_${status}`,orderId:order.id,
+      eventKey:`order:${order.id}:${status}:${userId}`,
+    };
+  });
+  await createNotifications(prisma,inputs);
+}
+function emitOrderStatusNotification(orderId:string,status:OrderStatus,extraRecipientUserId?:string) {
+  void notifyOrderStatus(orderId,status,extraRecipientUserId).catch(error=>logNotificationError('order_notification_persistence_failed',error));
+}
 function piiKey(){const secret=process.env.RIDER_PII_ENCRYPTION_KEY?.trim()||process.env.JWT_ACCESS_SECRET?.trim();if(!secret||secret.length<32)throw new Error('RIDER_PII_ENCRYPTION_KEY must be configured with at least 32 characters.');return createHash('sha256').update(secret).digest();}
 function encryptRiderNin(value:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',piiKey(),iv);const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${encrypted.toString('base64url')}`;}
 app.disable('x-powered-by');
@@ -35,6 +67,8 @@ function configuredOrigin(value:string|undefined) {
 const allowedOrigins = new Set([
   configuredOrigin(process.env.WEB_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3000'),
   configuredOrigin(process.env.ADMIN_ORIGIN)??(process.env.NODE_ENV==='production'?undefined:'http://localhost:3001'),
+  configuredOrigin(process.env.CUSTOMER_MOBILE_ORIGIN),
+  configuredOrigin(process.env.OPERATIONS_MOBILE_ORIGIN),
 ].filter((origin):origin is string=>Boolean(origin)));
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
@@ -45,7 +79,7 @@ app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb',verify:(req,_res,buffer)=>{(req as Request&{rawBody?:Buffer}).rawBody=buffer;} }));
 
-type AuthRequest = Request & { auth?: { userId: string; roles: Role[] } };
+type AuthRequest = Request & { auth?: { userId: string; roles: Role[]; demoAccess: boolean } };
 type RawRequest = Request & { rawBody?:Buffer };
 const emailSchema = z.string().trim().email().max(254).transform(v => v.toLowerCase());
 const passSchema = z.string().min(10).max(128);
@@ -110,7 +144,7 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   if(!pickup) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
   const previouslyOffered=new Set(delivery.offers.map(offer=>offer.riderId));
   const freshSince=new Date(Date.now()-10*60_000);
-  const candidateRiders=await prisma.riderProfile.findMany({where:{status:VendorStatus.APPROVED,available:true,location:{is:{updatedAt:{gte:freshSince}}},offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}}},deliveries:{none:{status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}},include:{location:true}});
+  const candidateRiders=await prisma.riderProfile.findMany({where:{status:VendorStatus.APPROVED,available:true,user:{isDemo:false},location:{is:{updatedAt:{gte:freshSince}}},offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}}},deliveries:{none:{status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}},include:{location:true}});
   const riders=(await Promise.all(candidateRiders.map(async rider=>({rider,count:await cancellationCount(rider.userId)})))).filter(item=>item.count<cancellationLimits.RIDER).map(item=>item.rider);
   const area=vendor.address.trim().toLowerCase();
   const maxDistance=Number(process.env.RIDER_MAX_PICKUP_KM??12);
@@ -133,7 +167,7 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   }
   if(!nearby.length) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
   const expiresAt=new Date(Date.now()+120_000);
-  return prisma.$transaction(async tx=>{
+  const createdCount=await prisma.$transaction(async tx=>{
     const current=await tx.delivery.findUnique({where:{id:deliveryId},include:{offers:{where:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}},select:{id:true}}}});
     if(!current||current.assignedRiderId||current.offers.length)return 0;
     const created=await tx.riderOffer.createMany({data:nearby.map(({rider,meters})=>({deliveryId,riderId:rider.id,pickupDistanceMeters:meters,expiresAt})),skipDuplicates:true});
@@ -141,6 +175,16 @@ async function dispatchDeliveryOffers(deliveryId:string) {
     await tx.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.OFFERING}});
     return created.count;
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  if(createdCount){
+    const shortId=delivery.order.id.slice(-8).toUpperCase();
+    const messages:NotificationInput[]=nearby.map(({rider})=>({
+      userId:rider.userId,title:'New delivery available',
+      body:`Pickup at ${vendor.name} · Order #${shortId}. Open the app to review this offer.`,
+      type:'RIDER_OFFER',orderId:delivery.order.id,eventKey:`rider-offer:${deliveryId}:${rider.userId}`,
+    }));
+    try{await createNotifications(prisma,messages);}catch(error){logNotificationError('rider_offer_notification_persistence_failed',error);}
+  }
+  return createdCount;
 }
 async function dispatchWaitingDeliveries() {
   const waiting=await prisma.delivery.findMany({where:{status:DeliveryStatus.UNASSIGNED,order:{status:OrderStatus.READY_FOR_PICKUP}},select:{id:true},take:100});
@@ -232,9 +276,17 @@ async function requireUser(req:AuthRequest,res:express.Response,next:express.Nex
   try {
     const session = await prisma.session.findUnique({where:{tokenHash:tokenHash(token)},include:{user:true}});
     if(!session || session.revokedAt || session.expiresAt <= new Date()) return res.status(401).json({error:{code:'SESSION_EXPIRED',message:'Your session has expired. Sign in again.'}});
-    req.auth = {userId:session.userId,roles:session.user.roles};
+    req.auth = {
+      userId:session.userId,
+      roles:session.user.roles,
+      demoAccess:canAccessDemoFeatures(session.user.email,session.user.isDemo,process.env.NODE_ENV),
+    };
     return next();
   } catch(error) { return next(error); }
+}
+function optionalUser(req:AuthRequest,res:express.Response,next:express.NextFunction) {
+  if(!req.header('authorization'))return next();
+  return requireUser(req,res,next);
 }
 function requireRole(role:Role) {
   return (req:AuthRequest,res:express.Response,next:express.NextFunction) => {
@@ -394,12 +446,15 @@ app.post('/api/v1/auth/login', async (req,res,next) => {
   try {
     const user = await prisma.user.findUnique({where:{email:input.data.email}});
     if(!user || !await verifyPassword(input.data.password,user.passwordHash)) return res.status(401).json({error:{code:'INVALID_CREDENTIALS',message:'Email or password is incorrect.'}});
+    const demoAccess=canAccessDemoFeatures(user.email,user.isDemo,process.env.NODE_ENV);
+    const seededDemoAccount=user.email?.toLowerCase()==='smile@gmail.com'||user.email?.endsWith('.demo@makanza.example');
+    if(user.isDemo&&seededDemoAccount&&!demoAccess)return res.status(401).json({error:{code:'INVALID_CREDENTIALS',message:'Email or password is incorrect.'}});
     const token = randomBytes(32).toString('base64url'); const expiresAt = new Date(Date.now()+30*24*60*60_000);
     await prisma.session.create({data:{userId:user.id,tokenHash:tokenHash(token),expiresAt}});
-    return res.json({data:{token,expiresAt,user:{id:user.id,name:user.name,email:user.email,phone:user.phone,roles:user.roles}}});
+    return res.json({data:{token,expiresAt,user:{id:user.id,name:user.name,email:user.email,phone:user.phone,roles:user.roles,isDemo:demoAccess}}});
   } catch(error) { return next(error); }
 });
-app.get('/api/v1/auth/me',requireUser,(req:AuthRequest,res) => res.json({data:req.auth}));
+app.get('/api/v1/auth/me',requireUser,(req:AuthRequest,res) => res.json({data:{userId:req.auth!.userId,roles:req.auth!.roles,isDemo:req.auth!.demoAccess}}));
 app.get('/api/v1/auth/profile',requireUser,async(req:AuthRequest,res,next)=>{
   try{
     const user=await prisma.user.findUnique({where:{id:req.auth!.userId},select:{id:true,name:true,email:true,phone:true}});
@@ -606,6 +661,7 @@ app.post('/api/v1/rider/offers/:offerId/accept',requireUser,requireRole(Role.RID
       await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
       return tx.delivery.findUnique({where:{id:offer.deliveryId},include:{order:{select:{id:true,status:true}},assignedRider:{include:{user:{select:{name:true}}}}}});
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    if(delivery)emitOrderStatusNotification(delivery.order.id,OrderStatus.RIDER_ASSIGNED);
     return res.json({data:delivery});
   }catch(error){if(error instanceof Error&&['OFFER_ALREADY_ASSIGNED','OFFER_EXPIRED','ORDER_STATE_CONFLICT'].includes(error.message))return res.status(409).json({error:{code:error.message,message:'The offer is no longer available. Refresh your offers.'}});if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2034')return res.status(409).json({error:{code:'OFFER_ALREADY_ASSIGNED',message:'Another rider accepted this delivery first.'}});return next(error);}
 });
@@ -644,10 +700,94 @@ app.get('/api/v1/rider/deliveries/:deliveryId/route',requireUser,requireRole(Rol
 });
 app.post('/api/v1/rider/deliveries/:deliveryId/complete',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   const input=z.object({code:z.string().regex(/^\d{6}$/)}).safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_DELIVERY_CODE',message:'Enter the 6 digit code from the customer.'}});
-  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});const expected=Buffer.from(deliveryOtp(delivery.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});}await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,isDemo:true,vendor:{select:{ownerId:true}}}});if(!order.isDemo&&order.subtotalMinor>0){const wallet=await tx.wallet.upsert({where:{userId:order.vendor.ownerId},update:{},create:{userId:order.vendor.ownerId,dvaStatus:'PENDING'}});const reference=`vendor_sale_${order.id}`;const existing=await tx.walletTransaction.findUnique({where:{reference},select:{id:true}});if(!existing){const updated=await tx.wallet.update({where:{id:wallet.id},data:{balanceMinor:{increment:order.subtotalMinor}}});await tx.walletTransaction.create({data:{walletId:wallet.id,userId:order.vendor.ownerId,type:'ORDER_EARNING',direction:'CREDIT',status:'SUCCEEDED',amountMinor:order.subtotalMinor,balanceAfter:updated.balanceMinor,reference,orderId:order.id,metadata:{basis:'delivered_item_subtotal'}}});}}await tx.riderProfile.update({where:{id:rider.id},data:{available:true}});});return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});}catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});return next(error);}
+  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});const expected=Buffer.from(deliveryOtp(delivery.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});}await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,isDemo:true,vendor:{select:{ownerId:true}}}});if(!order.isDemo&&order.subtotalMinor>0){const wallet=await tx.wallet.upsert({where:{userId:order.vendor.ownerId},update:{},create:{userId:order.vendor.ownerId,dvaStatus:'PENDING'}});const reference=`vendor_sale_${order.id}`;const existing=await tx.walletTransaction.findUnique({where:{reference},select:{id:true}});if(!existing){const updated=await tx.wallet.update({where:{id:wallet.id},data:{balanceMinor:{increment:order.subtotalMinor}}});await tx.walletTransaction.create({data:{walletId:wallet.id,userId:order.vendor.ownerId,type:'ORDER_EARNING',direction:'CREDIT',status:'SUCCEEDED',amountMinor:order.subtotalMinor,balanceAfter:updated.balanceMinor,reference,orderId:order.id,metadata:{basis:'delivered_item_subtotal'}}});}}await tx.riderProfile.update({where:{id:rider.id},data:{available:true}});});emitOrderStatusNotification(delivery.orderId,OrderStatus.DELIVERED);return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});}catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});return next(error);}
 });
 
-app.get('/api/v1/vendors',async (req,res,next) => {
+app.get('/api/v1/notifications',requireUser,async(req:AuthRequest,res,next)=>{
+  try{
+    const [items,unreadCount]=await Promise.all([
+      prisma.notification.findMany({where:{userId:req.auth!.userId},orderBy:{createdAt:'desc'},take:50,select:{id:true,title:true,body:true,type:true,orderId:true,readAt:true,createdAt:true}}),
+      prisma.notification.count({where:{userId:req.auth!.userId,readAt:null}}),
+    ]);
+    return res.json({data:{items,unreadCount}});
+  }catch(error){return next(error);}
+});
+app.patch('/api/v1/notifications/:notificationId/read',requireUser,async(req:AuthRequest,res,next)=>{
+  try{
+    const updated=await prisma.notification.updateMany({where:{id:routeParam(req,'notificationId'),userId:req.auth!.userId,readAt:null},data:{readAt:new Date()}});
+    if(!updated.count){
+      const existing=await prisma.notification.findFirst({where:{id:routeParam(req,'notificationId'),userId:req.auth!.userId},select:{id:true}});
+      if(!existing)return res.status(404).json({error:{code:'NOTIFICATION_NOT_FOUND',message:'Notification not found.'}});
+    }
+    return res.json({data:{read:true}});
+  }catch(error){return next(error);}
+});
+app.patch('/api/v1/notifications/read-all',requireUser,async(req:AuthRequest,res,next)=>{
+  try{
+    const result=await prisma.notification.updateMany({where:{userId:req.auth!.userId,readAt:null},data:{readAt:new Date()}});
+    return res.json({data:{updated:result.count}});
+  }catch(error){return next(error);}
+});
+app.post('/api/v1/notifications/devices',requireUser,async(req:AuthRequest,res,next)=>{
+  const input=z.object({
+    token:z.string().trim().min(20).max(220).regex(/^(Expo|Exponent)PushToken\[[^\]\s]+\]$/),
+    platform:z.enum(['ios','android']),
+  }).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PUSH_DEVICE',message:'A valid Expo push token and mobile platform are required.'}});
+  try{
+    await prisma.pushDevice.upsert({
+      where:{token:input.data.token},
+      update:{userId:req.auth!.userId,platform:input.data.platform},
+      create:{userId:req.auth!.userId,token:input.data.token,platform:input.data.platform},
+    });
+    return res.status(204).end();
+  }catch(error){return next(error);}
+});
+app.delete('/api/v1/notifications/devices',requireUser,async(req:AuthRequest,res,next)=>{
+  const input=z.object({token:z.string().trim().min(20).max(220)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PUSH_DEVICE',message:'The push token is invalid.'}});
+  try{
+    await prisma.pushDevice.deleteMany({where:{userId:req.auth!.userId,token:input.data.token}});
+    return res.status(204).end();
+  }catch(error){return next(error);}
+});
+
+app.post('/api/v1/admin/notifications',requireUser,requireAdminPermission('notifications.send'),async(req:AuthRequest,res,next)=>{
+  const input=z.object({
+    title:z.string().trim().min(2).max(80),
+    body:z.string().trim().min(2).max(240),
+    audience:z.enum(['CUSTOMERS','VENDORS','RIDERS','ALL']),
+  }).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_NOTIFICATION',message:'Enter a title, message, and valid recipient group.'}});
+  const audienceRoles:Record<typeof input.data.audience,Role[]> = {
+    CUSTOMERS:[Role.CUSTOMER],VENDORS:[Role.VENDOR],RIDERS:[Role.RIDER],
+    ALL:[Role.CUSTOMER,Role.VENDOR,Role.RIDER],
+  };
+  try{
+    const users=await prisma.user.findMany({
+      where:{isDemo:false,roles:{hasSome:audienceRoles[input.data.audience]}},
+      select:{id:true},
+    });
+    const broadcastId=randomBytes(12).toString('hex');
+    const notifications=await createNotifications(prisma,users.map(user=>({
+      userId:user.id,title:input.data.title,body:input.data.body,type:'ADMIN_BROADCAST',
+      eventKey:`admin-broadcast:${broadcastId}:${user.id}`,
+    })),{dispatchPush:false});
+    await prisma.auditLog.create({data:{
+      actorId:req.auth!.userId,action:'ADMIN_PUSH_NOTIFICATION_SENT',targetType:'NotificationBroadcast',targetId:broadcastId,
+      metadata:{audience:input.data.audience,title:input.data.title,recipientCount:notifications.length},isDemo:false,
+    }});
+    let push:{attempted:number;accepted:number;failed:number;error?:string};
+    try{push=await dispatchPushNotifications(prisma,notifications);}
+    catch(error){
+      logNotificationError('admin_push_broadcast_delivery_failed',error);
+      push={attempted:0,accepted:0,failed:notifications.length,error:'Push delivery failed; in-app notifications were saved.'};
+    }
+    return res.status(201).json({data:{broadcastId,recipientCount:notifications.length,push}});
+  }catch(error){return next(error);}
+});
+
+app.get('/api/v1/vendors',optionalUser,async (req:AuthRequest,res,next) => {
   const input = z.object({q:z.string().trim().max(100).optional(),category:z.string().trim().max(60).optional()}).safeParse(req.query);
   if(!input.success) return res.status(400).json({error:{code:'INVALID_QUERY',message:'Search query is invalid.'}});
   try {
@@ -658,22 +798,17 @@ app.get('/api/v1/vendors',async (req,res,next) => {
       return where;
     };
     const select={id:true,name:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{category:true,imageUrl:true},take:1}} as const;
-    const realVendorCount=await prisma.vendor.count({where:{status:VendorStatus.APPROVED,isOpen:true,isDemo:false}});
-    const source = catalogSource(realVendorCount,demoMode);
+    const source = catalogSource(req.auth?.demoAccess===true);
     const rows = source==='database'?await prisma.vendor.findMany({where:buildWhere(false),orderBy:{name:'asc'},take:50,select}):await prisma.vendor.findMany({where:buildWhere(true),orderBy:{name:'asc'},take:50,select});
     const data = rows.map(v=>({id:v.id,name:v.name,cuisine:v.products[0]?.category??'Local store',neighborhood:v.address,eta:'Estimate at checkout',fee:800,rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:v.latitude===null?null:Number(v.latitude),longitude:v.longitude===null?null:Number(v.longitude)}));
     return res.json({data,meta:{source,total:data.length}});
   } catch(error) { return next(error); }
 });
 
-app.get('/api/v1/vendors/:vendorId/products',async (req,res,next) => {
+app.get('/api/v1/vendors/:vendorId/products',optionalUser,async (req:AuthRequest,res,next) => {
   try {
     const vendorId=routeParam(req,'vendorId');
-    let vendor = await prisma.vendor.findFirst({where:{id:vendorId,status:VendorStatus.APPROVED,isOpen:true,isDemo:false},select:{id:true,isDemo:true}});
-    if(!vendor && demoMode) {
-      const realVendorCount=await prisma.vendor.count({where:{status:VendorStatus.APPROVED,isOpen:true,isDemo:false}});
-      if(realVendorCount===0) vendor=await prisma.vendor.findFirst({where:{id:vendorId,status:VendorStatus.APPROVED,isOpen:true,isDemo:true},select:{id:true,isDemo:true}});
-    }
+    const vendor = await prisma.vendor.findFirst({where:{id:vendorId,status:VendorStatus.APPROVED,isOpen:true,isDemo:req.auth?.demoAccess===true},select:{id:true,isDemo:true}});
     if(!vendor) return res.status(404).json({error:{code:'VENDOR_NOT_FOUND',message:'This kitchen is unavailable.'}});
     const products = await prisma.product.findMany({where:{vendorId:vendor.id,available:true,isDemo:vendor.isDemo},orderBy:{name:'asc'},take:100,include:{addons:{where:{available:true},orderBy:{createdAt:'asc'}}}});
     return res.json({data:products});
@@ -693,6 +828,7 @@ app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:Auth
       prisma.address.findFirst({where:{id:input.data.addressId,userId:req.auth!.userId}})
     ]);
     if(!vendor) return res.status(409).json({error:{code:'VENDOR_UNAVAILABLE',message:'This kitchen cannot accept orders right now.'}});
+    if(vendor.isDemo&&!req.auth?.demoAccess)return res.status(404).json({error:{code:'VENDOR_UNAVAILABLE',message:'This kitchen cannot accept orders right now.'}});
     const vendorOwner=await prisma.vendor.findUnique({where:{id:vendor.id},select:{ownerId:true}});if(vendorOwner&&await cancellationCount(vendorOwner.ownerId)>=cancellationLimits.VENDOR)return res.status(409).json({error:{code:'VENDOR_DAILY_CANCELLATION_LIMIT',message:'This vendor has reached today’s cancellation limit and cannot accept new orders today.'}});
     if(!address) return res.status(400).json({error:{code:'INVALID_ADDRESS',message:'Choose one of your saved delivery addresses.'}});
     const ids = input.data.items.map(item=>item.productId);
@@ -710,7 +846,7 @@ app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:Auth
     try { amounts=calculateOrderAmounts(input.data.items.map(item=>({priceMinor:products.find(p=>p.id===item.productId)!.priceMinor,quantity:item.quantity,addons:(item.addons??[]).map(choice=>({priceMinor:addons.find(addon=>addon.id===choice.addonId)!.priceMinor,quantity:choice.quantity}))})),deliveryFeeMinor); }
     catch { return res.status(400).json({error:{code:'ORDER_TOTAL_INVALID',message:'Order total is outside the supported range.'}}); }
     const {subtotalMinor,totalMinor}=amounts;
-    const mockPayment = vendor.isDemo && demoMode;
+    const mockPayment = shouldUseMockCheckout(vendor.isDemo,req.auth?.demoAccess===true);
     const order = await prisma.$transaction(async tx=>{
       for(const item of input.data.items) {
         const product = products.find(p=>p.id===item.productId)!;
@@ -723,6 +859,7 @@ app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:Auth
       if(mockPayment)await tx.payment.create({data:{orderId:created.id,amountMinor:created.totalMinor,status:'SUCCEEDED',provider:'development-mock',providerReference:`demo_${created.id}`,isDemo:true}});
       return created;
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    emitOrderStatusNotification(order.id,order.status);
     return res.status(201).json({data:order,paymentMode:mockPayment?'development-mock':'payment-required'});
   } catch(error) {
     if(error instanceof Error && error.message === 'STOCK_CONFLICT') return res.status(409).json({error:{code:'OUT_OF_STOCK',message:'Stock changed while placing this order. Refresh and try again.'}});
@@ -750,6 +887,7 @@ app.post('/api/v1/orders/:orderId/pay',requireUser,requireRole(Role.CUSTOMER),as
         const wallet=await ensureWallet(req.auth!.userId);
         return res.status(409).json({error:{code:'INSUFFICIENT_WALLET_BALANCE',message:'Your wallet balance is too low for this order.',details:{balanceMinor:wallet.balanceMinor,shortfallMinor:Math.max(0,order.totalMinor-wallet.balanceMinor)}}});
       }
+      emitOrderStatusNotification(order.id,OrderStatus.CONFIRMED);
       return res.json({data:{orderId:order.id,status:OrderStatus.CONFIRMED,method:'wallet',balanceMinor:result.balanceMinor}});
     }
     if(!order.customer.email)return res.status(409).json({error:{code:'EMAIL_REQUIRED',message:'Add an email address before paying with Paystack.'}});
@@ -898,14 +1036,24 @@ app.post(['/webhooks/paystack','/api/v1/webhooks/paystack'],async(req:RawRequest
         if(!wallet&&verified.customerCode)wallet=await prisma.wallet.findUnique({where:{paystackCustomerCode:verified.customerCode},select:{userId:true}});
         if(wallet)await creditWallet({userId:wallet.userId,amountMinor:verified.amountMinor,reference:`paystack_${verified.reference}`,type:'TOPUP',metadata:{channel:'dedicated_nuban'}});
       }
-      if(purpose==='order_payment'&&userId&&orderId) await prisma.$transaction(async tx=>{
-        const payment=await tx.payment.findUnique({where:{providerReference:verified.reference}});if(!payment||payment.orderId!==orderId||payment.amountMinor!==verified.amountMinor)throw new PaystackError('Payment reference does not match its order.');
-        const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
-        if(changed.count)await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.CONFIRMED,actorId:userId,note:'Paystack payment verified'}});
-        await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
-      },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+      if(purpose==='order_payment'&&userId&&orderId) {
+        const confirmed=await prisma.$transaction(async tx=>{
+          const payment=await tx.payment.findUnique({where:{providerReference:verified.reference}});if(!payment||payment.orderId!==orderId||payment.amountMinor!==verified.amountMinor)throw new PaystackError('Payment reference does not match its order.');
+          const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
+          if(changed.count)await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.CONFIRMED,actorId:userId,note:'Paystack payment verified'}});
+          await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
+          return changed.count>0;
+        },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+        if(confirmed)emitOrderStatusNotification(orderId,OrderStatus.CONFIRMED);
+      }
     }
-    if(event==='charge.failed'&&reference)await prisma.payment.updateMany({where:{providerReference:reference,status:'PENDING'},data:{status:'FAILED'}});
+    if(event==='charge.failed'&&reference){
+      const failed=await prisma.payment.updateMany({where:{providerReference:reference,status:'PENDING'},data:{status:'FAILED'}});
+      if(failed.count){
+        const payment=await prisma.payment.findUnique({where:{providerReference:reference},select:{orderId:true}});
+        if(payment)emitOrderStatusNotification(payment.orderId,OrderStatus.PAYMENT_FAILED);
+      }
+    }
     await prisma.paystackWebhookEvent.update({where:{eventKey},data:{processedAt:new Date()}});
     return res.json({data:{received:true}});
   } catch(error) { console.error(JSON.stringify({event:'paystack_webhook_processing_failed',eventKey,errorType:error instanceof Error?error.name:'unknown'}));return res.status(500).json({error:{code:'WEBHOOK_PROCESSING_FAILED',message:'Webhook processing will be retried.'}}); }
@@ -916,7 +1064,7 @@ async function cancelOrderForRole(orderId:string,userId:string,role:Cancellation
   if(role==='VENDOR'&&!owner)throw Object.assign(new Error('An approved vendor account is required.'),{status:403,code:'VENDOR_NOT_APPROVED'});
   const rider=role==='RIDER'?await prisma.riderProfile.findUnique({where:{userId}}):null;
   if(role==='RIDER'&&(!rider||rider.status!==VendorStatus.APPROVED))throw Object.assign(new Error('An approved rider account is required.'),{status:403,code:'RIDER_NOT_APPROVED'});
-  const order=await prisma.order.findFirst({where:{...(role==='RIDER'?{delivery:{is:{id:orderId,assignedRiderId:rider!.id}}}:{id:orderId}),...(role==='CUSTOMER'?{customerId:userId}:{}),...(owner?{vendorId:owner.id}:{})},include:{items:{select:{productId:true,quantity:true}},delivery:{select:{id:true,status:true,assignedRiderId:true}}}});
+  const order=await prisma.order.findFirst({where:{...(role==='RIDER'?{delivery:{is:{id:orderId,assignedRiderId:rider!.id}}}:{id:orderId}),...(role==='CUSTOMER'?{customerId:userId}:{}),...(owner?{vendorId:owner.id}:{})},include:{items:{select:{productId:true,quantity:true}},delivery:{select:{id:true,status:true,assignedRiderId:true,assignedRider:{select:{userId:true}}}}}});
   if(!order)throw Object.assign(new Error('This order was not found or is not assigned to you.'),{status:404,code:'ORDER_NOT_FOUND'});
   const cancellableStatuses:OrderStatus[]=[OrderStatus.PENDING_PAYMENT,OrderStatus.CONFIRMED,OrderStatus.ACCEPTED_BY_VENDOR,OrderStatus.PREPARING,OrderStatus.READY_FOR_PICKUP,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP];
   if(!cancellableStatuses.includes(order.status))throw Object.assign(new Error('This order can no longer be cancelled.'),{status:409,code:'ORDER_NOT_CANCELLABLE'});
@@ -938,6 +1086,7 @@ async function cancelOrderForRole(orderId:string,userId:string,role:Cancellation
     if(role==='RIDER'&&rider)await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
     else if(order.delivery?.assignedRiderId)await tx.riderProfile.updateMany({where:{id:order.delivery.assignedRiderId},data:{available:true}});
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  emitOrderStatusNotification(order.id,OrderStatus.CANCELLED,order.delivery?.assignedRider?.userId);
   return {id:order.id,status:OrderStatus.CANCELLED,reason,details:details??null};
 }
 async function cancellationRoute(req:AuthRequest,res:import('express').Response,next:import('express').NextFunction,role:CancellationRole){
@@ -998,6 +1147,7 @@ app.post('/api/v1/vendor/orders/:orderId/pickup',requireUser,requireRole(Role.VE
     const delivery=order.delivery;if(!delivery||delivery.status!==DeliveryStatus.ASSIGNED||!delivery.assignedRiderId)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This order does not have a rider awaiting pickup.'}});if(delivery.pickupVerifiedAt)return res.status(409).json({error:{code:'PICKUP_ALREADY_VERIFIED',message:'The rider pickup has already been verified.'}});if(delivery.pickupProofAttempts>=5)return res.status(429).json({error:{code:'PICKUP_CODE_LOCKED',message:'Too many incorrect codes. Contact support.'}});
     const expected=Buffer.from(vendorPickupOtp(delivery.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,status:DeliveryStatus.ASSIGNED,pickupVerifiedAt:null,pickupProofAttempts:{lt:5}},data:{pickupProofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'PICKUP_CODE_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_PICKUP_CODE',message:'That rider pickup code does not match. Ask the rider to show it again.'}});}
     await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,status:DeliveryStatus.ASSIGNED,pickupVerifiedAt:null},data:{status:DeliveryStatus.PICKED_UP,pickedUpAt:new Date(),pickupVerifiedAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:order.id},data:{status:OrderStatus.PICKED_UP}});await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.PICKED_UP,actorId:req.auth!.userId,note:'Vendor verified rider pickup code'}});});
+    emitOrderStatusNotification(order.id,OrderStatus.PICKED_UP);
     return res.json({data:{deliveryId:delivery.id,status:DeliveryStatus.PICKED_UP,verified:true}});
   }catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:'DELIVERY_STATE_CONFLICT',message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Pickup verification is not configured.'}});return next(error);}
 });
@@ -1029,6 +1179,7 @@ app.post('/api/v1/vendor/orders/:orderId/status',requireUser,requireRole(Role.VE
       return {updatedOrder,deliveryId};
     });
     if(result.deliveryId)await dispatchDeliveryOffers(result.deliveryId);
+    emitOrderStatusNotification(order.id,input.data.status);
     return res.json({data:result.updatedOrder});
   } catch(error) {
     if(error instanceof Error && error.message === 'ORDER_STATE_CONFLICT') return res.status(409).json({error:{code:'ORDER_STATE_CONFLICT',message:'The order changed. Refresh and try again.'}});

@@ -87,6 +87,17 @@ a{color:inherit;text-decoration:none}
 .finance-row strong{font-size:12px;font-weight:650;white-space:nowrap}
 .finance-row.unavailable strong{font-size:9px;color:#9aa39c}
 .definition-note{font-size:9px;line-height:1.6;color:#838f85;margin:11px 0 0}
+.notification-composer{max-width:760px;padding:20px}
+.notification-form{display:grid;gap:15px;margin-top:18px}
+.notification-form label{display:grid;gap:7px;color:#536258;font-size:10px;font-weight:650}
+.notification-form label>span{justify-self:end;margin-top:-22px;color:#8b958d;font-size:9px;font-weight:400}
+.notification-form input,.notification-form textarea,.notification-form select{width:100%;border:1px solid var(--line);background:#fff;padding:10px;color:var(--ink);font-size:11px;outline:none}
+.notification-form textarea{resize:vertical;min-height:110px;line-height:1.5}
+.notification-form input:focus,.notification-form textarea:focus,.notification-form select:focus{border-color:#93b5a0}
+.notification-form .button{justify-self:start}
+.notification-result{display:grid;gap:6px;margin-top:15px;padding:13px;border:1px solid #dce8df;background:#f5faf6;color:#375344;font-size:10px}
+.notification-result strong{font-size:11px}
+.notification-warning{color:#9b4a40}
 .recent-panel{margin-top:14px}
 .live-label{display:flex;align-items:center;gap:6px;color:#748078;font-size:8px;font-weight:700;letter-spacing:.7px}
 .table-scroll{width:100%;overflow-x:auto}
@@ -148,6 +159,10 @@ tbody tr:hover{background:#fafbf9}
 .login-form input{height:40px;border:1px solid #dfe6e0;background:#fff;padding:0 11px;outline:0;color:var(--ink);font-size:11px}
 .login-form input:focus{border-color:#78a488}
 .login-form input::placeholder{color:#a1aaa3}
+.password-input-wrap{position:relative}
+.login-form .password-input-wrap input,.admin-create-form .password-input-wrap input{padding-right:36px}
+.password-visibility{position:absolute;top:0;right:4px;height:100%;width:30px;display:grid;place-items:center;border:0;background:transparent;color:#69766a;cursor:pointer}
+.password-visibility:focus-visible{outline:2px solid #78a488;outline-offset:-2px}
 .field-error{font-size:9px;color:#a6453b}
 .login-submit{height:41px;margin-top:11px;justify-content:space-between;padding:0 13px;font-size:10px}
 .login-submit svg{margin-left:auto}

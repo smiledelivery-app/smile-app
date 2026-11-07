@@ -98,6 +98,8 @@ model User {
   supportTicketsAsCustomer SupportTicket[] @relation("SupportTicketCustomer")
   supportTicketsCreated SupportTicket[] @relation("SupportTicketCreator")
   supportTicketsAssigned SupportTicket[] @relation("SupportTicketAssignee")
+  notifications Notification[]
+  pushDevices PushDevice[]
 }
 
 model PendingPhoneSignup {
@@ -139,6 +141,32 @@ model Session {
   createdAt DateTime @default(now())
   user User @relation(fields:[userId], references:[id], onDelete:Cascade)
   @@index([userId,expiresAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  type      String
+  orderId   String?
+  eventKey  String?  @unique
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+model PushDevice {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
 }
 
 model Vendor {

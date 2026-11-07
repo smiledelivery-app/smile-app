@@ -1,12 +1,13 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import type { CancellationReason } from '@makanza/mobile-ui';
+import { isRunningInExpoGo } from 'expo';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, BackHandler, Image, Linking, Platform, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, Linking, Platform, Pressable, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '../components/AppIcon';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
-import { ApiError, type RiderDelivery, type RiderOffer, type RiderProfile, type Session, type VendorOrder } from '@makanza/mobile-core';
+import { ApiError, type NotificationInbox, type NotificationInboxItem, type RiderDelivery, type RiderOffer, type RiderProfile, type Session, type VendorOrder } from '@makanza/mobile-core';
 import { api } from '../services/api';
 import { darkColors, lightColors, type AppColors } from '../theme/colors';
 import OnboardingScreen from '../onboarding/OnboardingScreen';
@@ -15,9 +16,6 @@ import SignInScreen from '../auth/SignInScreen';
 import FontSplashScreen from '../components/FontSplashScreen';
 import VendorWorkspace from './VendorWorkspace';
 import RiderWorkspace from './RiderWorkspace';
-import PublicTabsPreview from './PublicTabsPreview';
-import { BrowseTabsContext } from './BrowseTabsContext';
-import { mobileEnv } from '../config/env';
 
 type WorkRole='VENDOR'|'RIDER';
 
@@ -44,8 +42,12 @@ export default function App(){
   const [selectedRole,setSelectedRole]=useState<WorkRole|null>(null);
   const [role,setRole]=useState<WorkRole|null>(null);
   const [vendorNotificationsOpen,setVendorNotificationsOpen]=useState(false);
+  const [notificationOpenSignal,setNotificationOpenSignal]=useState(0);
+  const [notificationInbox,setNotificationInbox]=useState<NotificationInbox>({items:[],unreadCount:0});
+  const [notificationsLoading,setNotificationsLoading]=useState(false);
+  const [notificationsError,setNotificationsError]=useState('');
+  const [pushToken,setPushToken]=useState('');
   const [vendorStoreName,setVendorStoreName]=useState('Your store');const [vendorOnIndex,setVendorOnIndex]=useState(true);
-  const [browsingTabs,setBrowsingTabs]=useState(mobileEnv.demoMode);
   const [vendorOrders,setVendorOrders]=useState<VendorOrder[]>([]);
   const [riderProfile,setRiderProfile]=useState<RiderProfile|null>(null);
   const [offers,setOffers]=useState<RiderOffer[]>([]);
@@ -64,13 +66,64 @@ export default function App(){
   const toggleTheme=()=>{const next=isDark?'light':'dark';setColorMode(next);void writeStorage('makanza-operations-theme-v1',next).catch(()=>undefined);};
   const token=session?.token;
 
-  useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(session)return false;if(browsingTabs){setBrowsingTabs(false);return true;}if(selectedRole){setSelectedRole(null);setRole(null);setError('');void removeStorage('makanza-operations-work-role-v1').catch(()=>undefined);return true;}return false;});return()=>subscription.remove();},[session,browsingTabs,selectedRole]);
+  useEffect(()=>{
+    if(Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return;
+    let active=true;
+    void import('expo-notifications').then(Notifications=>{
+      if(active)Notifications.setNotificationHandler({handleNotification:async()=>({shouldPlaySound:true,shouldSetBadge:true,shouldShowBanner:true,shouldShowList:true})});
+    }).catch(reason=>{if(active)setNotice(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');});
+    return()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(session)return false;if(selectedRole){setSelectedRole(null);setRole(null);setError('');void removeStorage('makanza-operations-work-role-v1').catch(()=>undefined);return true;}return false;});return()=>subscription.remove();  },[session,selectedRole]);
 
   useEffect(()=>{let active=true;void Promise.all([readStorage('makanza-operations-theme-v1').catch(()=>null),readStorage('makanza-operations-auto-refresh-v1').catch(()=>null),readStorage('makanza-operations-newsletter-v1').catch(()=>null)]).then(([theme,refresh,newsletter])=>{if(!active)return;if(theme==='dark'||theme==='light')setColorMode(theme);if(refresh==='false')setRiderAutoRefresh(false);if(newsletter==='true')setRiderNewsletter(true);}).finally(()=>{if(active)setPreferencesReady(true);});return()=>{active=false;};},[]);
   useEffect(()=>{let active=true;void readStorage('makanza-operations-onboarding-v2').then(value=>{if(active)setHasOnboarded(value==='complete');}).catch(()=>{if(active)setHasOnboarded(false);}).finally(()=>{if(active)setOnboardingReady(true);});return()=>{active=false;};},[]);
 
   const stopLocationUpdates=useCallback(()=>{locationSubscription.current?.remove();locationSubscription.current=null;setLocationSharing(false);},[]);
   const loadVendorOrders=useCallback(async(currentToken:string,quiet=false)=>{if(!quiet){setLoading(true);setError('');}try{setVendorOrders(await api.get<VendorOrder[]>('/vendor/orders',currentToken));setError('');}catch(e){setError(e instanceof Error?e.message:'Could not load kitchen orders.');}finally{if(!quiet)setLoading(false);}},[]);
+  const loadNotifications=useCallback(async(currentToken:string,quiet=false)=>{if(!quiet)setNotificationsLoading(true);setNotificationsError('');try{setNotificationInbox(await api.get<NotificationInbox>('/notifications',currentToken));}catch(e){setNotificationsError(e instanceof Error?e.message:'Could not load notifications.');}finally{if(!quiet)setNotificationsLoading(false);}},[]);
+  const readNotification=useCallback(async(item:NotificationInboxItem)=>{const currentToken=token;if(!currentToken||item.readAt)return;try{await api.patch(`/notifications/${encodeURIComponent(item.id)}/read`,{},currentToken);setNotificationInbox(current=>({...current,unreadCount:Math.max(0,current.unreadCount-1),items:current.items.map(row=>row.id===item.id?{...row,readAt:new Date().toISOString()}:row)}));}catch(reason){setNotificationsError(reason instanceof Error?reason.message:'Could not mark notification read.');}},[token]);
+  const readAllNotifications=useCallback(async()=>{if(!token)return;try{await api.patch('/notifications/read-all',{},token);const readAt=new Date().toISOString();setNotificationInbox(current=>({...current,unreadCount:0,items:current.items.map(item=>({...item,readAt}))}));}catch(reason){setNotificationsError(reason instanceof Error?reason.message:'Could not mark notifications read.');}},[token]);
+
+  useEffect(()=>{
+    if(!token||Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return;
+    let active=true;
+    void (async()=>{
+      try{
+        const Notifications=await import('expo-notifications');
+        if(Platform.OS==='android')await Notifications.setNotificationChannelAsync('default',{name:'Smile updates',importance:Notifications.AndroidImportance.MAX});
+        let permission=await Notifications.getPermissionsAsync();
+        if(!permission.granted)permission=await Notifications.requestPermissionsAsync();
+        if(!permission.granted)return;
+        const projectId=process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
+        if(!projectId)throw new Error('Set EXPO_PUBLIC_EAS_PROJECT_ID in the mobile app build environment.');
+        const deviceToken=(await Notifications.getExpoPushTokenAsync({projectId})).data;
+        await api.post('/notifications/devices',{token:deviceToken,platform:Platform.OS==='ios'?'ios':'android'},token);
+        if(active)setPushToken(deviceToken);
+      }catch(reason){if(active)setNotice(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');}
+    })();
+    return()=>{active=false;};
+  },[token]);
+  useEffect(()=>{
+    if(!token)return;
+    const appState=AppState.addEventListener('change',state=>{if(state==='active')void loadNotifications(token,true);});
+    if(Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return()=>appState.remove();
+    let active=true;
+    let received:{remove:()=>void}|undefined;
+    let response:{remove:()=>void}|undefined;
+    void import('expo-notifications').then(Notifications=>{
+      if(!active)return;
+      received=Notifications.addNotificationReceivedListener(()=>void loadNotifications(token,true));
+      response=Notifications.addNotificationResponseReceivedListener(()=>{
+        void loadNotifications(token);
+        if(role==='VENDOR')setVendorNotificationsOpen(true);
+        if(role==='RIDER')setNotificationOpenSignal(value=>value+1);
+      });
+    }).catch(reason=>{if(active)setNotificationsError(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');});
+    return()=>{active=false;received?.remove();response?.remove();appState.remove();};
+  },[token,role,loadNotifications]);
+  useEffect(()=>{if(token)void loadNotifications(token);else setNotificationInbox({items:[],unreadCount:0});},[token,loadNotifications]);
   const loadRiderData=useCallback(async(currentToken:string,quiet=false)=>{
     if(!quiet)setLoading(true);setError('');
     try{
@@ -96,16 +149,16 @@ export default function App(){
         const [saved,storedRole]=await Promise.all([readStorage('makanza-ops-session'),readStorage('makanza-operations-work-role-v1')]);
         if(storedRole==='VENDOR'||storedRole==='RIDER')preferredRole=storedRole;
         if(active&&preferredRole)setSelectedRole(preferredRole);
-        if(mobileEnv.demoMode||!saved)return;
+        if(!saved)return;
         try{const parsed=JSON.parse(saved) as Session;if(!parsed?.token||!parsed.user?.roles)throw new Error('Saved account data is incomplete.');savedSession=parsed;if(!preferredRole)preferredRole=parsed.user.roles.includes('VENDOR')?'VENDOR':parsed.user.roles.includes('RIDER')?'RIDER':null;if(active&&preferredRole)setSelectedRole(preferredRole);}
         catch{await removeStorage('makanza-ops-session');if(active)setError('Saved account data was not valid. Sign in again.');return;}
         if(!savedSession)return;
         try{
-          const identity=await api.get<{userId:string;roles:string[]}>('/auth/me',savedSession.token);
+          const identity=await api.get<{userId:string;roles:string[];isDemo:boolean}>('/auth/me',savedSession.token);
           if(!active)return;
           const roles=identity.roles;
           const selected=preferredRole&&roles.includes(preferredRole)?preferredRole:roles.includes('VENDOR')?'VENDOR':roles.includes('RIDER')?'RIDER':null;
-          const restored={...savedSession,user:{...savedSession.user,roles}};
+          const restored={...savedSession,user:{...savedSession.user,roles,isDemo:identity.isDemo}};
           setSession(restored);setSelectedRole(selected);setRole(selected);
           if(selected)await writeStorage('makanza-operations-work-role-v1',selected).catch(()=>undefined);
           if(selected==='VENDOR')await loadVendorOrders(savedSession.token);
@@ -187,7 +240,7 @@ export default function App(){
     catch(e){setError(e instanceof Error?e.message:'Could not update this order.');}
     finally{setBusy('');}
   };
-  const verifyVendorPickup=async(orderId:string,code:string)=>{if(!token)return;if(!/^\d{6}$/.test(code)){Alert.alert('Check the pickup code','Enter the six-digit code shown in the rider app.');return;}setBusy(orderId);setError('');try{await api.post(`/vendor/orders/${encodeURIComponent(orderId)}/pickup`,{code},token);setNotice('Rider pickup verified. The rider can now continue to the customer.');await loadVendorOrders(token);}catch(e){Alert.alert('Pickup code not verified',e instanceof Error?e.message:'Could not verify the rider pickup code. Ask the rider to show the code again.');}finally{setBusy('');}};
+  const verifyVendorPickup=async(orderId:string,code:string)=>{if(!token)return;if(!/^\d{6}$/.test(code)){setError('Enter the six-digit code shown in the rider app.');return;}setBusy(orderId);setError('');try{await api.post(`/vendor/orders/${encodeURIComponent(orderId)}/pickup`,{code},token);setNotice('Rider pickup verified. The rider can now continue to the customer.');await loadVendorOrders(token);}catch(e){setError(e instanceof Error?e.message:'Could not verify the rider pickup code. Ask the rider to show the code again.');}finally{setBusy('');}};
   const cancelRoleOrder=async(kind:'vendor'|'rider',orderOrDeliveryId:string,reason:CancellationReason,details:string)=>{if(!token)return;setBusy(orderOrDeliveryId);setError('');try{const path=kind==='vendor'?`/vendor/orders/${encodeURIComponent(orderOrDeliveryId)}/cancel`:`/rider/deliveries/${encodeURIComponent(orderOrDeliveryId)}/cancel`;await api.post(path,{reason,details:details||undefined},token);setNotice(kind==='vendor'?'Order cancelled and the reason was recorded.':'Delivery cancelled and the order was updated.');if(kind==='vendor')await loadVendorOrders(token);else await loadRiderData(token);}catch(e){setError(e instanceof Error?e.message:'Could not cancel this order.');}finally{setBusy('');}};
 
   const applyForRider=async()=>{
@@ -263,6 +316,8 @@ export default function App(){
 
   const signOut=async()=>{
     const current=token;if(current&&role==='RIDER'&&riderProfile?.available)await api.put('/rider/availability',{available:false},current).catch(()=>setNotice('Could not confirm offline status because the network is unavailable.'));
+    if(current&&pushToken)try{await api.delete('/notifications/devices',current,{token:pushToken});}catch(reason){setNotice(reason instanceof Error?`Push device could not be unregistered: ${reason.message}`:'Push device could not be unregistered.');}
+    setPushToken('');
     stopLocationUpdates();setSession(null);setRole(null);setSelectedRole(null);setVendorOrders([]);setRiderProfile(null);setOffers([]);setDeliveries([]);await Promise.all([removeStorage('makanza-ops-session'),removeStorage('makanza-operations-work-role-v1')]);
     if(current)void api.post('/auth/logout',{},current).catch(()=>undefined);
   };
@@ -275,16 +330,15 @@ export default function App(){
   if(!hasOnboarded)return <OnboardingScreen dark={isDark} onTheme={toggleTheme} onComplete={()=>void finishOnboarding()} onSelectRole={next=>void finishOnboarding(next)}/>;
   if(!session&&!selectedRole)return <RoleChoiceScreen dark={isDark} onTheme={toggleTheme} onSelectRole={switchRole}/>;
   if(session&&role===null)return <RoleChoiceScreen dark={isDark} signedIn onTheme={toggleTheme} onSelectRole={selectSessionWorkspace}/>;
-  if(!session&&browsingTabs)return <SafeAreaView style={s.safe}><StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={c.paper} translucent={false}/><View style={s.header}>{role==='VENDOR'&&vendorOnIndex?<Text numberOfLines={1} style={s.storeHeaderName}>{vendorStoreName}</Text>:<View style={{flexDirection:'row',alignItems:'center',gap:7}}><Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={{width:38,height:38}}/><Text style={s.ops}>OPS</Text></View>}<View style={s.headerActions}><Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={c.green}/></Pressable><Pressable accessibilityRole="link" onPress={()=>setBrowsingTabs(false)}><Text style={s.signOut}>Sign in</Text></Pressable></View></View><PublicTabsPreview colors={c} onBackToSignIn={()=>setBrowsingTabs(false)}/></SafeAreaView>;
-  if(!session&&selectedRole)return <BrowseTabsContext.Provider value={()=>setBrowsingTabs(true)}><SignInScreen role={selectedRole} dark={isDark} email={email} password={password} busy={busy} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={()=>void signIn()} onSignup={beginSignup} onVerify={(phone,code)=>void verifySignup(phone,code)} onResend={resendSignup} onChangeRole={changeRole} onTheme={toggleTheme}/></BrowseTabsContext.Provider>;
-  return <BrowseTabsContext.Provider value={()=>setBrowsingTabs(true)}><SafeAreaView style={s.safe}>
+  if(!session&&selectedRole)return <SignInScreen role={selectedRole} dark={isDark} email={email} password={password} busy={busy} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={()=>void signIn()} onSignup={beginSignup} onVerify={(phone,code)=>void verifySignup(phone,code)} onResend={resendSignup} onChangeRole={changeRole} onTheme={toggleTheme}/>;
+  return <SafeAreaView style={s.safe}>
     <StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={c.paper} translucent={false}/>
-    {role!=='RIDER'&&(role!=='VENDOR'||vendorOnIndex)&&<View style={s.header}>{role==='VENDOR'&&vendorOnIndex?<Text numberOfLines={1} style={s.storeHeaderName}>{vendorStoreName}</Text>:<View style={{flexDirection:'row',alignItems:'center',gap:7}}><Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={{width:38,height:38}}/><Text style={s.ops}>OPS</Text></View>}<View style={s.headerActions}>{role==='VENDOR'&&<Pressable accessibilityRole="button" accessibilityLabel="Vendor notifications" onPress={()=>setVendorNotificationsOpen(true)}><Ionicons name="notifications-outline" size={21} color={c.green}/></Pressable>}<Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={c.green}/></Pressable>{session&&role!=='VENDOR'&&<Pressable accessibilityRole="button" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}</View></View>}
+    {role!=='RIDER'&&(role!=='VENDOR'||vendorOnIndex)&&<View style={s.header}>{role==='VENDOR'&&vendorOnIndex?<Text numberOfLines={1} style={s.storeHeaderName}>{vendorStoreName}</Text>:<View style={{flexDirection:'row',alignItems:'center',gap:7}}><Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={{width:38,height:38}}/><Text style={s.ops}>OPS</Text></View>}<View style={s.headerActions}>{role==='VENDOR'&&<Pressable accessibilityRole="button" accessibilityLabel={`Vendor notifications, ${notificationInbox.unreadCount} unread`} onPress={()=>{setVendorNotificationsOpen(true);if(token)void loadNotifications(token);}}><Ionicons name="notifications-outline" size={21} color={c.green}/>{notificationInbox.unreadCount>0&&<View style={{position:'absolute',top:2,right:0,width:8,height:8,borderRadius:4,backgroundColor:'#d66b45'}}/>}</Pressable>}<Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={c.green}/></Pressable>{session&&role!=='VENDOR'&&<Pressable accessibilityRole="button" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}</View></View>}
     {session&&<>
-        {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} colors={c} notificationsOpen={vendorNotificationsOpen} onCloseNotifications={()=>setVendorNotificationsOpen(false)} onToggleTheme={toggleTheme} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status,reason)=>void updateOrder(id,status,reason)} onVerifyPickup={(id,code)=>void verifyVendorPickup(id,code)} onCancelOrder={(id,reason,details)=>void cancelRoleOrder('vendor',id,reason,details)} onSignOut={()=>void signOut()} onStoreName={setVendorStoreName} onIndexChange={setVendorOnIndex} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
-      {role==='RIDER'&&<RiderWorkspace token={token??''} user={session.user} name={session.user.name} authorized={session.user.roles.includes('RIDER')} profile={riderProfile} offers={offers} deliveries={deliveries} loading={loading} busy={busy} error={error} notice={notice} locationMessage={locationMessage} locationSharing={locationSharing} locationPermissionNeeded={locationPermissionNeeded} vehicleType={vehicleType} serviceArea={serviceArea} termsAccepted={termsAccepted} riderApplication={riderApplication} onRiderApplicationChange={(key,value)=>setRiderApplication(current=>({...current,[key]:value}))} completionCodes={completionCodes} colors={c} onCancel={(id,reason,details)=>void cancelRoleOrder('rider',id,reason,details)} onReload={()=>token&&void loadRiderData(token)} onAvailability={available=>void setAvailability(available)} onAccept={offer=>void acceptOffer(offer)} onReject={offer=>void rejectOffer(offer)} onComplete={delivery=>void complete(delivery)} onCode={(id,code)=>setCompletionCodes(current=>({...current,[id]:code}))} onShareLocation={()=>void startForegroundLocation().catch(e=>setLocationMessage(e instanceof Error?e.message:'Location sharing could not start.'))} onOpenSettings={()=>void Linking.openSettings()} onVehicle={setVehicleType} onArea={setServiceArea} onTerms={()=>setTermsAccepted(value=>!value)} onApply={()=>void applyForRider()} onSignOut={()=>void signOut()} onTheme={toggleTheme} autoRefresh={riderAutoRefresh} newsletter={riderNewsletter} onAutoRefresh={value=>{setRiderAutoRefresh(value);void writeStorage('makanza-operations-auto-refresh-v1',String(value));}} onNewsletter={value=>{setRiderNewsletter(value);void writeStorage('makanza-operations-newsletter-v1',String(value));}} onProfileSaved={(name,phone)=>{const updated={...session,user:{...session.user,name,phone}};setSession(updated);void writeStorage('makanza-ops-session',JSON.stringify(updated));}}/>}
+        {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} colors={c} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpen={vendorNotificationsOpen} onCloseNotifications={()=>setVendorNotificationsOpen(false)} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} onToggleTheme={toggleTheme} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status,reason)=>void updateOrder(id,status,reason)} onVerifyPickup={(id,code)=>void verifyVendorPickup(id,code)} onCancelOrder={(id,reason,details)=>void cancelRoleOrder('vendor',id,reason,details)} onSignOut={()=>void signOut()} onStoreName={setVendorStoreName} onIndexChange={setVendorOnIndex} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
+      {role==='RIDER'&&<RiderWorkspace token={token??''} user={session.user} name={session.user.name} authorized={session.user.roles.includes('RIDER')} profile={riderProfile} offers={offers} deliveries={deliveries} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpenSignal={notificationOpenSignal} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} loading={loading} busy={busy} error={error} notice={notice} locationMessage={locationMessage} locationSharing={locationSharing} locationPermissionNeeded={locationPermissionNeeded} vehicleType={vehicleType} serviceArea={serviceArea} termsAccepted={termsAccepted} riderApplication={riderApplication} onRiderApplicationChange={(key,value)=>setRiderApplication(current=>({...current,[key]:value}))} completionCodes={completionCodes} colors={c} onCancel={(id,reason,details)=>void cancelRoleOrder('rider',id,reason,details)} onReload={()=>token&&void loadRiderData(token)} onAvailability={available=>void setAvailability(available)} onAccept={offer=>void acceptOffer(offer)} onReject={offer=>void rejectOffer(offer)} onComplete={delivery=>void complete(delivery)} onCode={(id,code)=>setCompletionCodes(current=>({...current,[id]:code}))} onShareLocation={()=>void startForegroundLocation().catch(e=>setLocationMessage(e instanceof Error?e.message:'Location sharing could not start.'))} onOpenSettings={()=>void Linking.openSettings()} onVehicle={setVehicleType} onArea={setServiceArea} onTerms={()=>setTermsAccepted(value=>!value)} onApply={()=>void applyForRider()} onSignOut={()=>void signOut()} onTheme={toggleTheme} autoRefresh={riderAutoRefresh} newsletter={riderNewsletter} onAutoRefresh={value=>{setRiderAutoRefresh(value);void writeStorage('makanza-operations-auto-refresh-v1',String(value));}} onNewsletter={value=>{setRiderNewsletter(value);void writeStorage('makanza-operations-newsletter-v1',String(value));}} onProfileSaved={(name,phone)=>{const updated={...session,user:{...session.user,name,phone}};setSession(updated);void writeStorage('makanza-ops-session',JSON.stringify(updated));}}/>}
     </>}
-  </SafeAreaView></BrowseTabsContext.Provider>;
+  </SafeAreaView>;
 }
 
 const createStyles=(c:AppColors)=>StyleSheet.create({safe:{flex:1,backgroundColor:c.paper},headerActions:{flexDirection:'row',alignItems:'center',gap:9},storeHeaderName:{flex:1,fontSize:18,fontWeight:'900',color:c.ink,marginRight:8},themeToggle:{paddingHorizontal:9,paddingVertical:7,borderRadius:0,backgroundColor:c.card},themeText:{fontSize:11,fontWeight:'800',color:c.green},flex:{flex:1},header:{height:62,paddingHorizontal:18,backgroundColor:c.cream,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},brand:{fontSize:23,fontWeight:'800',color:c.ink,letterSpacing:-.6},mark:{backgroundColor:c.green,color:c.lime,borderRadius:0,overflow:'hidden',paddingHorizontal:7,fontFamily:'serif'},ops:{fontSize:11,color:c.orange,letterSpacing:1.2},signOut:{fontSize:13,color:c.green,fontWeight:'700'},login:{padding:23,justifyContent:'center',flexGrow:1},eyebrow:{fontSize:11,letterSpacing:1.4,color:'#527452',fontWeight:'800',marginBottom:12},title:{fontSize:35,lineHeight:42,fontWeight:'700',letterSpacing:-1,color:c.ink},subtitle:{fontSize:15,lineHeight:22,color:c.muted,marginTop:8,marginBottom:15},label:{fontSize:13,color:c.ink,fontWeight:'700',marginTop:12,marginBottom:6},inputGroup:{marginTop:4},input:{height:45,borderColor:c.isDark?c.line:'#9aa99f',borderWidth:1,borderRadius:0,paddingHorizontal:12,backgroundColor:c.card,fontSize:15,color:c.ink},button:{minHeight:41,paddingHorizontal:14,borderRadius:0,backgroundColor:c.green,justifyContent:'center',alignItems:'center'},buttonText:{fontSize:13,fontWeight:'800',color:c.isDark?'#17231b':'white'},buttonSecondary:{backgroundColor:c.card,borderWidth:1,borderColor:c.line},buttonSecondaryText:{color:c.green},disabled:{opacity:.5},error:{fontSize:13,lineHeight:21,color:'#a44232',marginVertical:10},hero:{padding:20,backgroundColor:c.isDark?'#194c3a':c.green,borderBottomLeftRadius: 0,borderBottomRightRadius: 0},refresh:{backgroundColor:'rgba(255,255,255,.14)',paddingHorizontal:11,paddingVertical:8,borderRadius:0},refreshText:{fontSize:12,color:c.lime,fontWeight:'800'},vendorEyebrow:{fontSize:11,letterSpacing:1.4,color:'#d5ef81',fontWeight:'800',marginBottom:8},vendorHeroTitle:{fontSize:32,lineHeight:38,fontWeight:'800',letterSpacing:-1,color:'white'},vendorHeroSubtitle:{fontSize:13,lineHeight:19,color:'#e5ecdf',marginTop:8,marginBottom:14},metrics:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',backgroundColor:'rgba(255,255,255,.10)',paddingVertical:12,paddingHorizontal:10,borderRadius:0,marginTop:7},metric:{flex:1,alignItems:'center'},metricValue:{fontSize:24,fontWeight:'800',color:'white'},metricLabel:{fontSize:9,letterSpacing:.7,fontWeight:'800',color:'#d9e5d1',marginTop:2},metricDivider:{width:1,height:28,backgroundColor:'rgba(255,255,255,.2)'},switchLink:{fontSize:12,color:c.lime,fontWeight:'700',marginTop:13},roleSwitch:{height:48,flexDirection:'row',borderBottomWidth:1,borderBottomColor:c.line},roleTab:{flex:1,alignItems:'center',justifyContent:'center'},roleTabActive:{borderBottomWidth:2,borderBottomColor:c.green},roleTabText:{fontSize:15,color:c.muted},roleTabTextActive:{fontWeight:'700',color:c.green},state:{padding:20,alignItems:'center',justifyContent:'center',gap:8},stateTitle:{fontSize:17,fontWeight:'700',color:c.ink},list:{padding:13,gap:10},orderCard:{padding:14,gap:11,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10},orderId:{fontSize:15,fontWeight:'700',color:c.ink},status:{fontSize:11,color:c.green,backgroundColor:c.cream,paddingHorizontal:8,paddingVertical:5,borderRadius:0,textTransform:'capitalize'},items:{fontSize:13,lineHeight:21,color:c.muted},date:{fontSize:11,color:c.muted,flex:1},total:{fontSize:13,fontWeight:'700',color:c.green},actions:{flexDirection:'row',gap:8,justifyContent:'flex-end',marginTop:8},rider:{padding:16,gap:13,paddingBottom:30},riderHero:{minHeight:154,padding:19,borderRadius:0,backgroundColor:c.isDark?'#194c3a':c.green,flexDirection:'row',alignItems:'center',justifyContent:'space-between',overflow:'hidden'},riderEyebrow:{fontSize:11,letterSpacing:1.3,color:c.lime,fontWeight:'800',marginBottom:8},riderTitle:{fontSize:28,lineHeight:34,fontWeight:'800',letterSpacing:-.7,color:'white'},riderLead:{fontSize:12,color:'#e4ebdc',marginTop:7},riderOrbit:{width:70,height:70,borderRadius:0,backgroundColor:'rgba(213,239,129,.17)',alignItems:'center',justifyContent:'center',marginRight:2},riderOrbitIcon:{fontSize:43,color:c.lime,fontWeight:'700'},riderIntroRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:2},notice:{padding:16,borderRadius:0,backgroundColor:c.cream,borderWidth:1,borderColor:c.line},noticeTitle:{fontSize:17,fontWeight:'700',color:c.ink,marginBottom:7},muted:{fontSize:12,lineHeight:19,color:c.muted},terms:{flexDirection:'row',alignItems:'center',gap:9,marginTop:15},checkbox:{fontSize:24,color:c.green},termsText:{fontSize:13,color:c.ink,flex:1},riderSummary:{padding:15,borderRadius:0,borderWidth:0,borderColor:'transparent',backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,gap:10},onlinePill:{paddingHorizontal:9,paddingVertical:5,borderRadius:0,backgroundColor:'#f1f2ed'},onlinePillActive:{backgroundColor:'#e9f3d7'},onlineText:{fontSize:10,fontWeight:'800',color:c.muted},onlineTextActive:{color:c.green},locationText:{fontSize:11,color:c.muted},sectionTitle:{fontSize:17,fontWeight:'700',color:c.ink,marginVertical:5},deliveryCard:{padding:16,gap:10,marginTop:10,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},offerCard:{padding:16,gap:10,marginTop:10,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},offerExpires:{fontSize:11,color:'#9a6836'},empty:{padding:18,alignItems:'center',gap:6,backgroundColor:c.cream,borderRadius:0}});

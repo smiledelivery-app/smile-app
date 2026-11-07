@@ -1,18 +1,17 @@
 import { AppText as Text } from '@makanza/mobile-ui';
-import { useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BackHandler, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '../components/AppIcon';
 import FormField from '../components/FormField';
 import PrimaryButton from '../components/PrimaryButton';
-import { BrowseTabsContext } from '../navigation/BrowseTabsContext';
 
 type WorkRole='VENDOR'|'RIDER';
 type Channel='sms'|'whatsapp';
 type Props={role:WorkRole;email:string;password:string;busy:string;error:string;dark:boolean;onEmail:(value:string)=>void;onPassword:(value:string)=>void;onLogin:()=>void;onSignup:(name:string,email:string,phone:string,password:string,channel:Channel)=>Promise<string|null>;onVerify:(phone:string,code:string)=>void;onResend:(phone:string)=>Promise<boolean>;onChangeRole:()=>void;onTheme:()=>void};
 
 export default function SignInScreen(p:Props){
-  const browseTabs=useContext(BrowseTabsContext);const rider=p.role==='RIDER';
+  const rider=p.role==='RIDER';
   const [mode,setMode]=useState<'login'|'signup'|'verify'>('login');const [name,setName]=useState('');const [phone,setPhone]=useState('');const [channel,setChannel]=useState<Channel>('sms');const [code,setCode]=useState('');const [seconds,setSeconds]=useState(0);const [submitted,setSubmitted]=useState(false);
   useEffect(()=>{if(seconds<=0)return;const timer=setTimeout(()=>setSeconds(value=>value-1),1000);return()=>clearTimeout(timer);},[seconds]);
   const startSignup=async()=>{setSubmitted(true);const destination=await p.onSignup(name,p.email,phone,p.password,channel);if(destination){setPhone(destination);setCode('');setSeconds(60);setMode('verify');}};
@@ -34,7 +33,7 @@ export default function SignInScreen(p:Props){
       {mode==='login'&&<><PrimaryButton title={p.busy==='login'?'Signing in...':'Sign in'} onPress={()=>{setSubmitted(true);p.onLogin();}} disabled={Boolean(p.busy)} style={s.button}/><Pressable accessibilityRole="button" onPress={()=>{setSubmitted(false);setMode('signup');}} style={s.linkButton}><Text style={[s.link,p.dark&&s.textDark]}>New to Smile? Create an account</Text></Pressable></>}
       {mode==='signup'&&<><PrimaryButton title={p.busy==='signup'?'Starting signup...':'Create account'} onPress={()=>void startSignup()} disabled={Boolean(p.busy)||!name.trim()||!p.email.trim()||!phone.trim()||p.password.length<10} style={s.button}/><Pressable accessibilityRole="button" onPress={()=>{setSubmitted(false);setMode('login');}} style={s.linkButton}><Text style={[s.link,p.dark&&s.textDark]}>Already have an account? Sign in</Text></Pressable></>}
       {mode==='verify'&&<><PrimaryButton title={p.busy==='verify'?'Verifying...':'Verify phone'} onPress={()=>{setSubmitted(true);p.onVerify(phone,code);}} disabled={Boolean(p.busy)||code.length<4} style={s.button}/><Pressable accessibilityRole="button" disabled={Boolean(p.busy)||seconds>0} onPress={()=>{setSubmitted(true);void p.onResend(phone).then(sent=>{if(sent)setSeconds(60);});}} style={s.linkButton}><Text style={[s.link,p.dark&&s.textDark]}>{seconds>0?`Resend code in ${seconds}s`:'Resend verification code'}</Text></Pressable><Pressable accessibilityRole="button" onPress={()=>{setSubmitted(false);setMode('signup');}} style={s.linkButton}><Text style={[s.link,p.dark&&s.textDark]}>Back to signup</Text></Pressable></>}
-      {mode==='login'&&<Pressable accessibilityRole="link" onPress={browseTabs} style={s.browse}><Text style={s.browseText}>Browse app tabs without signing in</Text></Pressable>}
+      
     </ScrollView>
   </KeyboardAvoidingView></SafeAreaView>;
 }

@@ -40,4 +40,4 @@ Rider deliveries show a Google Maps route when a server Routes API key and nativ
 
 ## EAS
 
-Build profiles live in `eas.json`; `.easignore` excludes local dependencies, Expo cache, and private env files. Configure the API URL in the EAS build environment for each profile.
+Build profiles live in `eas.json`; `.easignore` excludes local dependencies, Expo cache, and private env files. Set `EXPO_PUBLIC_API_URL` in the EAS `preview` environment to the isolated staging API before building a preview; never point the demo test account at production.

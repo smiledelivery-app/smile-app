@@ -11,13 +11,14 @@ export type AdminPermission =
   | 'disputes.read'
   | 'disputes.manage'
   | 'sessions.manage'
-  | 'admins.manage';
+  | 'admins.manage'
+  | 'notifications.send';
 
 const rolePermissions: Record<string, readonly AdminPermission[]> = {
   SUPER_ADMIN: [
     'dashboard.read', 'orders.read', 'customers.read', 'vendors.read',
     'vendors.review', 'riders.read', 'riders.review', 'finance.read',
-    'audit.read', 'disputes.read', 'disputes.manage', 'sessions.manage', 'admins.manage',
+    'audit.read', 'disputes.read', 'disputes.manage', 'sessions.manage', 'admins.manage', 'notifications.send',
   ],
   OPERATIONS_MANAGER: ['dashboard.read', 'orders.read', 'vendors.read', 'vendors.review', 'riders.read', 'riders.review', 'disputes.read', 'disputes.manage'],
   FINANCE_ADMIN: ['dashboard.read', 'finance.read'],
