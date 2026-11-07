@@ -1,5 +1,5 @@
 import { AppText as Text } from '@makanza/mobile-ui';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import { BackHeader } from '../components/ui';
 import type { AppColors } from '../theme/colors';
@@ -19,7 +19,7 @@ export default function PreferencesScreen({colors:c,dark,autoRefresh,newsletter,
       <View style={s.copy}><Text style={s.rowTitle}>Dark mode</Text><Text style={s.body}>{dark?'Dark appearance is on':'Use a darker appearance'}</Text></View>
       <Switch value={dark} onValueChange={onTheme} trackColor={{false:c.line,true:c.green}} thumbColor="white"/>
     </View>
-    <Pressable accessibilityRole="button" onPress={()=>Alert.alert('Language','English is currently the available app language.')} style={s.setting}>
+    <Pressable accessibilityRole="button" onPress={()=>Platform.OS==='web'?window.alert('English is currently the available app language.'):Alert.alert('Language','English is currently the available app language.')} style={s.setting}>
       <Ionicons name="language-outline" size={24} color={c.green}/>
       <View style={s.copy}><Text style={s.rowTitle}>Language</Text><Text style={s.body}>English</Text></View>
       <Ionicons name="chevron-forward" size={21} color={c.muted}/>
