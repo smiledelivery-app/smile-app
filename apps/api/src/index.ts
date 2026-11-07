@@ -70,8 +70,16 @@ const allowedOrigins = new Set([
   configuredOrigin(process.env.CUSTOMER_MOBILE_ORIGIN),
   configuredOrigin(process.env.OPERATIONS_MOBILE_ORIGIN),
 ].filter((origin):origin is string=>Boolean(origin)));
+function isAllowedOrigin(origin:string|undefined) {
+  if(!origin)return true;
+  if(allowedOrigins.has(origin))return true;
+  try{
+    const url=new URL(origin);
+    return url.protocol==='https:'&&(url.hostname==='smiledelivery24.com'||url.hostname.endsWith('.smiledelivery24.com'));
+  }catch{return false;}
+}
 const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
   credentials: true,
   optionsSuccessStatus: 204,
 };
