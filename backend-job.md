@@ -71,7 +71,7 @@ with `cancelled`, `rejected` and `failed` branches.
    - Rank by distance/ETA to the pickup point, then rating and acceptance rate.
    - Offer the job to the best rider with an expiry (e.g. 30-60s). If declined or timed out, offer it to the next rider, expanding the radius progressively. Handle the case where no rider is found (retry, notify the vendor and customer, escalate to admin).
    - Prevent double assignment with an atomic lock or transaction.
-4. **Distance and ETA:** use the same map provider the apps use (check the repo: Google Maps, Mapbox, etc.). Fall back to Haversine if the provider is unavailable.
+4. **Distance and ETA:** use Google Maps Routes API, the mapping provider used by the apps. Fall back to Haversine if the provider is unavailable.
 5. **Delivery radius enforcement:** reject orders where the customer's address is outside the vendor's delivery radius.
 6. Expose the endpoints the map screens need (nearby vendors, rider location stream, ETA, route polyline) in the shapes the apps expect.
 

@@ -17,9 +17,13 @@ Enable billing and these APIs in the Google Cloud project: **Routes API** and **
 - `RIDER_MAX_PICKUP_KM`: maximum route distance for rider pickup (default 12 km).
 - `GOOGLE_MAPS_ALLOW_STRAIGHT_LINE_FALLBACK`: default `false`; production-only emergency override.
 
+The two server variables may contain the same key if that key is restricted to both Routes API and Geocoding API. `MAPS_API_KEY` is also supported as a legacy fallback.
+
 Restrict server keys to their APIs and server IPs where hosting permits. Do not put these keys in `EXPO_PUBLIC_*` or a web bundle.
 
-For native map tiles, configure separate Google Maps SDK keys in the EAS build environment: `GOOGLE_MAPS_ANDROID_API_KEY` and `GOOGLE_MAPS_IOS_API_KEY`. Restrict rider-app keys to package `ng.makanza.operations` and bundle ID `ng.makanza.operations`; restrict customer-app keys to package `ng.smile.customer` and bundle ID `ng.smile.customer`. Apply the production signing certificate SHA fingerprint to Android restrictions. Set `EXPO_PUBLIC_GOOGLE_MAPS_ENABLED=true` and rebuild the relevant native binary. Maps SDK keys are included in the app binary, so application restrictions are required. Keep the keys out of source control and the `.env` upload (`.easignore` excludes private environment files).
+Both native apps explicitly render Google Maps. Configure restricted Maps SDK keys in each app's EAS build environment using `GOOGLE_MAPS_ANDROID_API_KEY` and `GOOGLE_MAPS_IOS_API_KEY`. Restrict operations-app keys to package and bundle ID `ng.makanza.operations`; restrict customer-app keys to `ng.smile.customer`. Apply the production signing certificate SHA fingerprint to Android restrictions. Build each app with its own keys and rebuild the native binary after changing them. Maps SDK keys are included in the app binary, so application restrictions are required. Keep the keys out of source control and the `.env` upload (`.easignore` excludes private environment files).
+
+The mobile web renderers do not display interactive map tiles; the native iOS and Android apps do. The operations web renderer can still show Google-provided route distance and ETA from the API.
 
 A browser can supply vendor coordinates through its location permission. Customer addresses and vendors are geocoded server-side when the configured key is available. If a pin remains unavailable, the API keeps the address and the order, but cannot dispatch or draw a route until coordinates can be obtained.
 
