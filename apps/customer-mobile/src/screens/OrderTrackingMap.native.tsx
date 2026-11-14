@@ -2,7 +2,7 @@ import { AppText as Text } from '@makanza/mobile-ui';
 import { Bike, LocateFixed, MapPin, Store } from 'lucide-react-native';
 import { useEffect, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Marker, type Region } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 import type { OrderTracking } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 
@@ -49,7 +49,7 @@ export default function OrderTrackingMap({ tracking, loading, error, colors: c }
 
   return <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
     <View style={styles.mapFrame}>
-      {region ? <MapView ref={map} style={StyleSheet.absoluteFill} initialRegion={region} showsCompass={false} showsBuildings showsTraffic={false} toolbarEnabled={false}>
+      {region ? <MapView ref={map} provider={PROVIDER_GOOGLE} style={StyleSheet.absoluteFill} initialRegion={region} showsCompass={false} showsBuildings showsTraffic={false} toolbarEnabled={false}>
         {vendor && <Marker coordinate={vendor} title={tracking?.vendor.name ?? 'Restaurant'} description="Restaurant pickup"><MarkerBadge icon="store" color={c.green} background={c.card} /></Marker>}
         {customer && <Marker coordinate={customer} title="Delivery address" description="Your delivery destination"><MarkerBadge icon="pin" color="#d36545" background={c.card} /></Marker>}
         {rider && <Marker coordinate={rider} title="Your rider" description={recent ? 'Live location' : 'Last known location'} zIndex={3}><View style={[styles.riderHalo, { backgroundColor: c.isDark ? 'rgba(124,199,160,.2)' : 'rgba(29,97,71,.15)' }]}><MarkerBadge icon="bike" color="#fff" background={c.green} /></View></Marker>}

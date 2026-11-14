@@ -9,7 +9,7 @@ Expo and React Native customer application.
    - Android emulator: `http://10.0.2.2:4100/api/v1`
    - iOS simulator: `http://localhost:4100/api/v1`
    - Physical device: use your computer's LAN IP and ensure both devices share the network.
-   - To display the native rider-tracking map, configure restricted `GOOGLE_MAPS_ANDROID_API_KEY` and `GOOGLE_MAPS_IOS_API_KEY` values and set `EXPO_PUBLIC_GOOGLE_MAPS_ENABLED=true`, then rebuild the native app. See [Google Maps setup](../../docs/GOOGLE_MAPS.md).
+   - To display the native Google Maps rider-tracking map, configure restricted `GOOGLE_MAPS_ANDROID_API_KEY` and `GOOGLE_MAPS_IOS_API_KEY` values, then rebuild the native app. See [Google Maps setup](../../docs/GOOGLE_MAPS.md).
 3. Start the API, then run `pnpm --filter @makanza/customer-mobile start`.
 
 The customer app loads catalog, menus, orders, wallet details, and payment activity from the API. It requires sign-in; API errors and empty responses are shown rather than replaced with local fixtures. API-backed orders require a customer session.

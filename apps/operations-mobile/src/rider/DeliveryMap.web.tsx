@@ -3,11 +3,10 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
 import type { RiderDelivery } from '@makanza/mobile-core';
 import { api } from '../services/api';
-import { mobileEnv } from '../config/env';
 import type { AppColors } from '../theme/colors';
 
 type Coordinate = { latitude: number; longitude: number };
-type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google-routes' };
+type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google' };
 const coord = (latitude: number | string | null | undefined, longitude: number | string | null | undefined): Coordinate | null => {
   if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) return null;
   const point = { latitude: Number(latitude), longitude: Number(longitude) };
@@ -27,10 +26,6 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
     setLoading(true);
     setError('');
     setRoute(null);
-    if (!mobileEnv.googleMapsEnabled) {
-      setLoading(false);
-      return () => { active = false; };
-    }
     api.get<RouteData>(`/rider/deliveries/${encodeURIComponent(delivery.id)}/route`, token)
       .then(result => { if (active) setRoute(result); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Route details are unavailable.'); })
@@ -38,14 +33,10 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
     return () => { active = false; };
   }, [delivery.id, delivery.status, token]);
 
-  const fallbackMessage = mobileEnv.googleMapsEnabled
-    ? 'Interactive maps are available in the iOS and Android apps.'
-    : 'Add restricted Google Maps SDK keys to the EAS build to show the live map.';
-
   return <View style={[styles.wrap, { backgroundColor: c.cream, borderColor: c.line }]}>
     <View style={styles.mapFallback}>
       <Text style={[styles.fallbackTitle, { color: c.ink }]}>Route map</Text>
-      <Text style={[styles.fallbackCopy, { color: c.muted }]}>{fallbackMessage}</Text>
+      <Text style={[styles.fallbackCopy, { color: c.muted }]}>Interactive Google Maps are available in the iOS and Android apps.</Text>
     </View>
     <View style={styles.routeMeta}>
       <View style={styles.routeCopy}>

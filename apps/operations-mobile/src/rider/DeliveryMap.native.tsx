@@ -1,13 +1,13 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Marker, Polyline, type LatLng, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type LatLng, type Region } from 'react-native-maps';
 import type { RiderDelivery } from '@makanza/mobile-core';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
 
 type Coordinate = { latitude: number; longitude: number };
-type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google'|'maplibre'; geometryFormat?:'google-encoded'|'latlng-semicolon' };
+type RouteData = { deliveryId: string; leg: 'PICKUP' | 'DROPOFF'; origin: Coordinate; destination: Coordinate; distanceMeters: number; durationSeconds: number | null; encodedPolyline: string; provider: 'google' };
 const coord = (latitude: number | string | null | undefined, longitude: number | string | null | undefined): Coordinate | null => {
   if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) return null;
   const point = { latitude: Number(latitude), longitude: Number(longitude) };
@@ -31,7 +31,7 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
     return () => { active = false; };
   }, [delivery.id, delivery.status, token]);
 
-  const coordinates = useMemo(() => route?.encodedPolyline ? route.geometryFormat==='latlng-semicolon' ? route.encodedPolyline.split(';').map(pair=>{const [latitude,longitude]=pair.split(',').map(Number);return {latitude,longitude};}).filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude)) : decodePolyline(route.encodedPolyline) : [], [route?.encodedPolyline,route?.geometryFormat]);
+  const coordinates = useMemo(() => route?.encodedPolyline ? decodePolyline(route.encodedPolyline) : [], [route?.encodedPolyline]);
   const region = useMemo((): Region | undefined => {
     const points = [route?.origin, route?.destination, vendorPoint, customerPoint].filter((p): p is Coordinate => !!p);
     if (!points.length) return undefined;
@@ -44,7 +44,7 @@ export default function DeliveryMap({ delivery, token, colors: c }: { delivery: 
   const mapPoints = route ? [route.origin, route.destination] : destination ? [destination] : [];
 
   return <View style={[styles.wrap, { backgroundColor: c.cream, borderColor: c.line }]}>
-    {region ? <MapView style={styles.map} initialRegion={region} region={region} showsUserLocation showsMyLocationButton>
+    {region ? <MapView provider={PROVIDER_GOOGLE} style={styles.map} initialRegion={region} region={region} showsUserLocation showsMyLocationButton>
       {mapPoints.map((point, index) => <Marker key={`${index}-${point.latitude}-${point.longitude}`} coordinate={point} title={route ? index === 0 ? 'Your current location' : delivery.status === 'PICKED_UP' ? 'Customer drop-off' : delivery.order.vendor.name : delivery.status === 'PICKED_UP' ? 'Customer drop-off' : delivery.order.vendor.name} pinColor={route && index === 0 ? '#194c3a' : '#e87c59'}/>)}
       {coordinates.length > 1 && <Polyline coordinates={coordinates} strokeWidth={5} strokeColor="#194c3a"/>}
     </MapView> : <View style={styles.mapFallback}><Text style={[styles.fallbackTitle, { color: c.ink }]}>Route map</Text><Text style={[styles.fallbackCopy, { color: c.muted }]}>A map pin is not available for this stop yet.</Text></View>}

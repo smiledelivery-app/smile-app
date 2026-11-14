@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
-import { drivingRoute, geocode, GoogleMapsError, mapProvider, MapServiceError, routeDistances } from './map-provider.js';
+import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, routesConfigured, routeDistances } from './google-map-service.js';
 import { createProofCode } from './proof-codes.js';
 import { createRiderNinUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
 import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
@@ -108,7 +108,7 @@ async function cancellationCount(actorId:string){return prisma.orderStatusEvent.
 function cancellationNote(reason:typeof cancellationReasons[number],details?:string){const labels={OUT_OF_STOCK:'Out of stock',NOT_AVAILABLE:'No longer available',PRICE_CHANGED:'Price has changed',VEHICLE_BREAKDOWN:'Vehicle breakdown',NO_LONGER_INTERESTED:'No longer interested',ORDERED_BY_MISTAKE:'Ordered by mistake',DELIVERY_TAKING_TOO_LONG:'Delivery taking too long',EMERGENCY:'Emergency',OTHER:'Other'};return `Cancelled: ${labels[reason]}${details?` — ${details}`:''}`;}
 function cancellationInput(body:unknown){return z.object({reason:z.enum(cancellationReasons),details:z.string().trim().max(300).optional()}).refine(value=>value.reason!=='OTHER'||Boolean(value.details),{message:'Add a short explanation for your cancellation reason.'}).safeParse(body);}
 const deliveryProofSecret = () => process.env.DELIVERY_OTP_SECRET??(process.env.NODE_ENV==='production'?undefined:process.env.JWT_ACCESS_SECRET);
-const mappingConfigured = (kind:'routes'|'geocoding') => mapProvider()==='maplibre' ? !!process.env.OPENROUTESERVICE_API_KEY : kind==='routes' ? !!(process.env.GOOGLE_MAPS_ROUTES_API_KEY??process.env.MAPS_API_KEY) : !!(process.env.GOOGLE_MAPS_GEOCODING_API_KEY??process.env.GOOGLE_MAPS_ROUTES_API_KEY??process.env.MAPS_API_KEY);
+const mappingConfigured = (kind:'routes'|'geocoding') => kind==='routes' ? routesConfigured() : geocodingConfigured();
 const paystackSecret = () => process.env.PAYSTACK_SECRET_KEY ?? '';
 const coordinatePair = z.object({latitude:z.number().min(-90).max(90).optional(),longitude:z.number().min(-180).max(180).optional()}).refine(value=>(value.latitude===undefined)===(value.longitude===undefined),'Provide both latitude and longitude.');
 const GOOGLE_COORDINATE_TTL_MS=30*24*60*60_000;
@@ -698,11 +698,11 @@ app.get('/api/v1/rider/deliveries/:deliveryId/route',requireUser,requireRole(Rol
       ?await freshVendorCoordinates(delivery.order.vendor)
       :delivery.order.address?await freshAddressCoordinates(delivery.order.address):null;
     if(!destination)return res.status(409).json({error:{code:'DESTINATION_COORDINATES_UNAVAILABLE',message:'A map pin is not available for this stop yet.'}});
-    if(!mappingConfigured('routes'))return res.status(503).json({error:{code:'MAPS_NOT_CONFIGURED',message:`${mapProvider()} route service is not configured.`}});
+    if(!mappingConfigured('routes'))return res.status(503).json({error:{code:'MAPS_NOT_CONFIGURED',message:'Google Maps Routes API is not configured.'}});
     const route=await drivingRoute(origin,destination);
-    return res.json({data:{deliveryId:delivery.id,leg:isPickup?'PICKUP':'DROPOFF',origin,destination,distanceMeters:route.distanceMeters,durationSeconds:route.durationSeconds,encodedPolyline:route.encodedPolyline,geometryFormat:mapProvider()==='maplibre'?'latlng-semicolon':'google-encoded',provider:mapProvider()}});
+    return res.json({data:{deliveryId:delivery.id,leg:isPickup?'PICKUP':'DROPOFF',origin,destination,distanceMeters:route.distanceMeters,durationSeconds:route.durationSeconds,encodedPolyline:route.encodedPolyline,provider:'google'}});
   }catch(error){
-    if(error instanceof GoogleMapsError||error instanceof MapServiceError)return res.status(502).json({error:{code:'ROUTE_UNAVAILABLE',message:`${mapProvider()} could not calculate this route. Try again or open navigation.`}});
+    if(error instanceof GoogleMapsError)return res.status(502).json({error:{code:'ROUTE_UNAVAILABLE',message:'Google Maps could not calculate this route. Try again or open navigation.'}});
     return next(error);
   }
 });

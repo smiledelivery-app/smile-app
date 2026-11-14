@@ -3,5 +3,4 @@
 const defaultApiUrl = 'https://smile-backend-2den.onrender.com/api/v1';
 const configuredApiUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim();
 const apiUrl = (configuredApiUrl || defaultApiUrl).replace(/\/$/, '');
-const googleMapsEnabled = process.env.EXPO_PUBLIC_GOOGLE_MAPS_ENABLED === 'true';
-export const mobileEnv = Object.freeze({ apiUrl, demoMode: false, googleMapsEnabled });
+export const mobileEnv = Object.freeze({ apiUrl, demoMode: false });

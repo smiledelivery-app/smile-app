@@ -91,8 +91,8 @@ export default function PrivacyPolicyPage() {
                 location information needed to complete that delivery.
               </li>
               <li>
-                Mapping providers, such as Google Maps or OpenRouteService, may receive an address
-                or coordinates when geocoding an address or calculating a route.
+                Google Maps may receive an address or coordinates when geocoding an address or
+                calculating a route.
               </li>
               <li>
                 Phone-verification providers may process your phone number and verification
