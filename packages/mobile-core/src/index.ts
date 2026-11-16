@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(message:string,public readonly status:number,public readonly code?:string) {
+  constructor(message:string,public readonly status:number,public readonly code?:string,public readonly details?:unknown) {
     super(message); this.name='ApiError';
   }
 }
@@ -18,9 +18,16 @@ export function createApiClient(baseUrl:string) {
         headers:{accept:'application/json','content-type':'application/json',...(options.token?{authorization:`Bearer ${options.token}`}:{ }),...options.headers}
       });
       if(response.status===204) return undefined as T;
-      const body=await response.json().catch(()=>null) as {data?:T;error?:{message?:string;code?:string}}|null;
-      if(!response.ok) throw new ApiError(body?.error?.message??'The service could not complete this request.',response.status,body?.error?.code);
+      const body=await response.json().catch(()=>null) as {data?:T;error?:{message?:string;code?:string;providerResponse?:unknown}}|null;
+      if(!response.ok) {
+        if(body?.error?.providerResponse) console.error('[phone verification] Infobip response:',body.error.providerResponse);
+        throw new ApiError(body?.error?.message??'The service could not complete this request.',response.status,body?.error?.code,body?.error?.providerResponse);
+      }
       if(!body || !('data' in body)) throw new ApiError('The service returned an unexpected response.',response.status,'INVALID_RESPONSE');
+      if(body.data && typeof body.data==='object' && 'providerResponse' in body.data) {
+        const providerResponse=(body.data as {providerResponse?:unknown}).providerResponse;
+        if(providerResponse) console.log('[phone verification] Infobip response:',providerResponse);
+      }
       return body.data as T;
     } catch(error) {
       if(error instanceof ApiError) throw error;

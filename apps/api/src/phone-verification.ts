@@ -4,13 +4,32 @@ export type PhoneVerificationChannel = 'sms' | 'whatsapp';
 
 type ProviderResponse = { pinId?: string; verified?: boolean; status?: string; message?: string };
 type WhatsAppProviderResponse = {
-  messages?: Array<{ messageId?: string; status?: { groupName?: string } }>;
+  messages?: Array<{ messageId?: string; status?: { groupName?: string; name?: string } }>;
   requestError?: { serviceException?: { messageId?: string } };
+};
+
+export type PhoneVerificationProviderResponse = {
+  httpStatus: number;
+  messageId?: string;
+  statusGroup?: string;
+  statusName?: string;
+  errorCode?: string;
+};
+
+export type PhoneVerificationResult = {
+  pinId: string;
+  providerResponse?: PhoneVerificationProviderResponse;
 };
 
 export class PhoneVerificationError extends Error {
   readonly status: number;
-  constructor(message: string, status = 502) { super(message); this.status = status; this.name = 'PhoneVerificationError'; }
+  readonly providerResponse?: PhoneVerificationProviderResponse;
+  constructor(message: string, status = 502, providerResponse?: PhoneVerificationProviderResponse) {
+    super(message);
+    this.status = status;
+    this.providerResponse = providerResponse;
+    this.name = 'PhoneVerificationError';
+  }
 }
 
 function infobipBaseUrl(): string {
@@ -55,7 +74,7 @@ function configuredTestCode(): string | undefined {
   return code;
 }
 
-async function sendWhatsAppVerification(phone: string, fetcher: typeof fetch = fetch): Promise<string> {
+async function sendWhatsAppVerification(phone: string, fetcher: typeof fetch = fetch): Promise<PhoneVerificationResult> {
   const config = whatsappSettings();
   const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
   let response: Response;
@@ -86,21 +105,31 @@ async function sendWhatsAppVerification(phone: string, fetcher: typeof fetch = f
   if (!response.ok) {
     const errorCode = body?.requestError?.serviceException?.messageId;
     console.error(JSON.stringify({ event: 'infobip_whatsapp_send_rejected', status: response.status, providerErrorCode: errorCode ?? null }));
-    throw new PhoneVerificationError(`Infobip rejected the WhatsApp message (HTTP ${response.status}${errorCode ? `, ${errorCode}` : ''}). Check the Infobip message logs and approved template.`);
+    throw new PhoneVerificationError(
+      `Infobip rejected the WhatsApp message (HTTP ${response.status}${errorCode ? `, ${errorCode}` : ''}). Check the Infobip message logs and approved template.`,
+      502,
+      { httpStatus: response.status, ...(errorCode ? { errorCode } : {}) },
+    );
   }
   const providerMessage = body?.messages?.[0];
   if (!providerMessage?.messageId) {
     console.error(JSON.stringify({ event: 'infobip_whatsapp_send_missing_message_id', status: response.status }));
-    throw new PhoneVerificationError('Infobip did not return a WhatsApp message reference. Check the Infobip message logs.');
+    throw new PhoneVerificationError('Infobip did not return a WhatsApp message reference. Check the Infobip message logs.', 502, { httpStatus: response.status });
   }
   const statusGroup = providerMessage.status?.groupName?.toUpperCase();
+  const providerResponse: PhoneVerificationProviderResponse = {
+    httpStatus: response.status,
+    messageId: providerMessage.messageId,
+    ...(statusGroup ? { statusGroup } : {}),
+    ...(providerMessage.status?.name ? { statusName: providerMessage.status.name } : {}),
+  };
   if (statusGroup && ['REJECTED', 'UNDELIVERABLE', 'FAILED', 'SKIPPED'].includes(statusGroup)) {
     console.error(JSON.stringify({ event: 'infobip_whatsapp_message_rejected', statusGroup }));
-    throw new PhoneVerificationError(`Infobip rejected the WhatsApp message (${statusGroup}). Check the Infobip message logs.`);
+    throw new PhoneVerificationError(`Infobip rejected the WhatsApp message (${statusGroup}). Check the Infobip message logs.`, 502, providerResponse);
   }
   console.info(JSON.stringify({ event: 'infobip_whatsapp_message_accepted', providerMessageId: providerMessage.messageId, statusGroup: statusGroup ?? null }));
   const digest = createHmac('sha256', config.apiKey).update(`${phone}:${code}`).digest('hex');
-  return `whatsapp:${digest}`;
+  return { pinId: `whatsapp:${digest}`, providerResponse };
 }
 
 async function infobipRequest(path: string, payload: Record<string, string>, fetcher: typeof fetch = fetch): Promise<ProviderResponse> {
@@ -116,15 +145,15 @@ async function infobipRequest(path: string, payload: Record<string, string>, fet
   return body ?? {};
 }
 
-export async function sendPhoneVerification(phone: string, channel: PhoneVerificationChannel, fetcher: typeof fetch = fetch): Promise<string> {
-  if (configuredTestCode()) return 'test-code';
+export async function sendPhoneVerification(phone: string, channel: PhoneVerificationChannel, fetcher: typeof fetch = fetch): Promise<PhoneVerificationResult> {
+  if (configuredTestCode()) return { pinId: 'test-code' };
   if (channel === 'whatsapp') return sendWhatsAppVerification(phone, fetcher);
   const config = infobipSettings();
   const response = await infobipRequest('/2fa/2/pin', {
     applicationId: config.applicationId, messageId: config.messageId, from: config.sender, to: phone.replace(/^\+/, ''),
   }, fetcher);
   if (!response.pinId) throw new PhoneVerificationError('Infobip did not return a verification reference. Check your 2FA application and message template.');
-  return response.pinId;
+  return { pinId: response.pinId };
 }
 
 export async function checkPhoneVerification(pinId: string, phone: string, code: string): Promise<boolean> {

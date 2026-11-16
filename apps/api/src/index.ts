@@ -13,7 +13,7 @@ import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConf
 import { createProofCode } from './proof-codes.js';
 import { createRiderNinUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
 import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
-import { checkPhoneVerification, PhoneVerificationError, sendPhoneVerification, type PhoneVerificationChannel } from './phone-verification.js';
+import { checkPhoneVerification, PhoneVerificationError, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
 import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
 
@@ -21,6 +21,7 @@ const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.API_PORT ?? 4100);
 const phoneVerificationBypass = process.env.PHONE_VERIFICATION_BYPASS === 'true' && process.env.NODE_ENV !== 'production';
+const phoneVerificationDebugResponse = process.env.PHONE_VERIFICATION_DEBUG_RESPONSE === 'true';
 const vendorNotificationStatuses: OrderStatus[] = [OrderStatus.CONFIRMED,OrderStatus.CANCELLED,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP];
 async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipientUserId?:string) {
   const order=await prisma.order.findUnique({
@@ -410,12 +411,26 @@ app.post('/api/v1/auth/register', async (req,res,next) => {
     if(existingPending)await prisma.pendingPhoneSignup.delete({where:{id:existingPending.id}});
     const passwordHash=await makePasswordHash(input.data.password);
     const pending=await prisma.pendingPhoneSignup.create({data:{name:input.data.name,email:input.data.email,phone,passwordHash,channel:input.data.channel,expiresAt:new Date(Date.now()+15*60_000)}});
-    try{const providerPinId=await sendPhoneVerification(phone,input.data.channel as PhoneVerificationChannel);await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{providerPinId}});}
+    let providerResponse: PhoneVerificationProviderResponse | undefined;
+    try {
+      const sent = await sendPhoneVerification(phone, input.data.channel as PhoneVerificationChannel);
+      providerResponse = sent.providerResponse;
+      await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{providerPinId:sent.pinId}});
+    }
     catch(error){await prisma.pendingPhoneSignup.deleteMany({where:{id:pending.id}});throw error;}
-    return res.status(202).json({data:{phone,channel:input.data.channel,expiresAt:pending.expiresAt}});
+    return res.status(202).json({data:{
+      phone,
+      channel:input.data.channel,
+      expiresAt:pending.expiresAt,
+      ...(phoneVerificationDebugResponse && providerResponse ? {providerResponse} : {}),
+    }});
   } catch(error) {
     if(error instanceof Error&&error.message==='ACCOUNT_EXISTS')return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
-    if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{code:error.status===503?'PHONE_VERIFICATION_UNAVAILABLE':'PHONE_VERIFICATION_SEND_FAILED',message:error.message}});
+    if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{
+      code:error.status===503?'PHONE_VERIFICATION_UNAVAILABLE':'PHONE_VERIFICATION_SEND_FAILED',
+      message:error.message,
+      ...(phoneVerificationDebugResponse && error.providerResponse ? {providerResponse:error.providerResponse} : {}),
+    }});
     if(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return res.status(409).json({error:{code:'ACCOUNT_EXISTS',message:'An account already uses that email or phone number.'}});
     return next(error);
   }
@@ -429,10 +444,22 @@ app.post('/api/v1/auth/register/resend',async(req,res)=>{
     const pending=await prisma.pendingPhoneSignup.findUnique({where:{phone}});
     if(!pending||pending.expiresAt.getTime()<=Date.now())return res.status(410).json({error:{code:'SIGNUP_EXPIRED',message:'This signup has expired. Start again to request a new code.'}});
     if(Date.now()-pending.lastSentAt.getTime()<60_000)return res.status(429).json({error:{code:'VERIFICATION_WAIT',message:'Wait one minute before requesting another verification code.'}});
-    const providerPinId=await sendPhoneVerification(phone,pending.channel as PhoneVerificationChannel);
-    await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{lastSentAt:new Date(),providerPinId}});
-    return res.json({data:{phone,channel:pending.channel,expiresAt:pending.expiresAt}});
-  }catch(error){if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{code:'PHONE_VERIFICATION_SEND_FAILED',message:error.message}});return res.status(500).json({error:{code:'PHONE_VERIFICATION_SEND_FAILED',message:'Could not send a verification code. Try again.'}});}
+    const sent=await sendPhoneVerification(phone,pending.channel as PhoneVerificationChannel);
+    await prisma.pendingPhoneSignup.update({where:{id:pending.id},data:{lastSentAt:new Date(),providerPinId:sent.pinId}});
+    return res.json({data:{
+      phone,
+      channel:pending.channel,
+      expiresAt:pending.expiresAt,
+      ...(phoneVerificationDebugResponse && sent.providerResponse ? {providerResponse:sent.providerResponse} : {}),
+    }});
+  }catch(error){
+    if(error instanceof PhoneVerificationError)return res.status(error.status).json({error:{
+      code:'PHONE_VERIFICATION_SEND_FAILED',
+      message:error.message,
+      ...(phoneVerificationDebugResponse && error.providerResponse ? {providerResponse:error.providerResponse} : {}),
+    }});
+    return res.status(500).json({error:{code:'PHONE_VERIFICATION_SEND_FAILED',message:'Could not send a verification code. Try again.'}});
+  }
 });
 
 app.post('/api/v1/auth/register/verify',async(req,res,next)=>{

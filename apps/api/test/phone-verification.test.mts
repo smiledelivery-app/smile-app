@@ -22,11 +22,11 @@ test('configured test code verifies phone signup outside production', async () =
   process.env.NODE_ENV = 'test';
   process.env.PHONE_VERIFICATION_TEST_CODE = '123456';
 
-  const pinId = await sendPhoneVerification('+2348012345678', 'sms');
+  const result = await sendPhoneVerification('+2348012345678', 'sms');
 
-  assert.equal(pinId, 'test-code');
-  assert.equal(await checkPhoneVerification(pinId, '+2348012345678', '123456'), true);
-  assert.equal(await checkPhoneVerification(pinId, '+2348012345678', '654321'), false);
+  assert.equal(result.pinId, 'test-code');
+  assert.equal(await checkPhoneVerification(result.pinId, '+2348012345678', '123456'), true);
+  assert.equal(await checkPhoneVerification(result.pinId, '+2348012345678', '654321'), false);
 });
 
 test('test code is disabled in production', async () => {
@@ -60,11 +60,17 @@ test('WhatsApp signup sends a positional code using the Infobip template API', a
   const fetcher: typeof fetch = async (input, init) => {
     requestUrl = String(input);
     request = init;
-    return Response.json({ messages: [{ messageId: 'message-id', status: { groupName: 'PENDING' } }] });
+    return Response.json({ messages: [{ messageId: 'message-id', status: { groupName: 'PENDING', name: 'PENDING_ENROUTE' } }] });
   };
-  const pinId = await sendPhoneVerification('+2348012345678', 'whatsapp', fetcher);
+  const result = await sendPhoneVerification('+2348012345678', 'whatsapp', fetcher);
 
-  assert.match(pinId, /^whatsapp:/);
+  assert.match(result.pinId, /^whatsapp:/);
+  assert.deepEqual(result.providerResponse, {
+    httpStatus: 200,
+    messageId: 'message-id',
+    statusGroup: 'PENDING',
+    statusName: 'PENDING_ENROUTE',
+  });
   assert.equal(requestUrl, 'https://test.api.infobip.com/whatsapp/1/message/template');
   assert.equal(new Headers(request?.headers).get('authorization'), 'App test-api-key');
   const payload = JSON.parse(String(request?.body)) as {
@@ -78,4 +84,24 @@ test('WhatsApp signup sends a positional code using the Infobip template API', a
   assert.deepEqual(payload.messages[0].content.templateData.buttons, [
     { type: 'URL', parameter: payload.messages[0].content.templateData.body.placeholders[0] },
   ]);
+});
+
+test('WhatsApp send errors expose only sanitized provider response fields', async () => {
+  process.env.NODE_ENV = 'production';
+  delete process.env.PHONE_VERIFICATION_TEST_CODE;
+  process.env.INFOBIP_BASE_URL = 'https://test.api.infobip.com';
+  process.env.INFOBIP_API_KEY = 'test-api-key';
+  process.env.INFOBIP_WHATSAPP_SENDER = '+2348000000000';
+  process.env.INFOBIP_WHATSAPP_TEMPLATE_NAME = 'authentication';
+
+  const fetcher: typeof fetch = async () => Response.json({
+    requestError: { serviceException: { messageId: 'EC_TEMPLATE_NOT_FOUND' } },
+  }, { status: 400 });
+
+  await assert.rejects(
+    sendPhoneVerification('+2348012345678', 'whatsapp', fetcher),
+    error => error instanceof PhoneVerificationError
+      && error.providerResponse?.httpStatus === 400
+      && error.providerResponse.errorCode === 'EC_TEMPLATE_NOT_FOUND',
+  );
 });
