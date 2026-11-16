@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
-import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, routesConfigured, routeDistances } from './google-map-service.js';
+import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
 import { createProofCode } from './proof-codes.js';
 import { createRiderNinUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
 import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
@@ -335,6 +335,20 @@ app.get('/api/v1/ready',async (_req,res) => {
 });
 
 const addressInput = z.object({label:z.string().trim().min(1).max(40),line1:z.string().trim().min(3).max(200),city:z.string().trim().min(2).max(80)}).and(coordinatePair);
+app.get('/api/v1/addresses/suggestions',requireUser,async(req,res)=>{
+  const query=z.string().trim().min(3).max(120).safeParse(req.query.q);
+  if(!query.success)return res.status(400).json({error:{code:'INVALID_LOCATION_QUERY',message:'Enter at least 3 characters to search for a Nigerian location.'}});
+  if(!placesConfigured())return res.status(503).json({error:{code:'PLACES_NOT_CONFIGURED',message:'Location search is not configured on this server.'}});
+  try{return res.json({data:await suggestPlaces(query.data)});}
+  catch(error){if(error instanceof GoogleMapsError)return res.status(error.status===undefined?502:503).json({error:{code:'PLACE_SEARCH_UNAVAILABLE',message:error.message}});return res.status(502).json({error:{code:'PLACE_SEARCH_UNAVAILABLE',message:'Could not search Nigerian locations.'}});}
+});
+app.post('/api/v1/addresses/resolve',requireUser,async(req,res)=>{
+  const input=z.object({placeId:z.string().trim().min(1).max(512)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PLACE',message:'Choose a location from the Nigerian search results.'}});
+  if(!placesConfigured())return res.status(503).json({error:{code:'PLACES_NOT_CONFIGURED',message:'Location search is not configured on this server.'}});
+  try{return res.json({data:await resolveAddressPlace(input.data.placeId)});}
+  catch(error){if(error instanceof GoogleMapsError)return res.status(error.status===undefined?502:503).json({error:{code:'PLACE_UNAVAILABLE',message:error.message}});return res.status(502).json({error:{code:'PLACE_UNAVAILABLE',message:'Could not load that Nigerian location.'}});}
+});
 app.get('/api/v1/addresses',requireUser,async (req:AuthRequest,res,next) => {
   try { const data = await prisma.address.findMany({where:{userId:req.auth!.userId},orderBy:{createdAt:'desc'}}); return res.json({data}); }
   catch(error) { return next(error); }

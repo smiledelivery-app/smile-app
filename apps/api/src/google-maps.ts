@@ -2,6 +2,8 @@ export type Coordinate = { latitude: number; longitude: number };
 export type RouteDistance = { distanceMeters: number; durationSeconds: number | null };
 export type RouteDirections = RouteDistance & { encodedPolyline: string };
 export type GeocodedPoint = Coordinate & { placeId: string | null };
+export type PlaceSuggestion = { placeId: string; description: string };
+export type ResolvedPlace = { line1: string; city: string; latitude: number; longitude: number };
 
 type MatrixElement = {
   originIndex?: number;
@@ -15,6 +17,99 @@ type MatrixElement = {
 export class GoogleMapsError extends Error {
   readonly status?: number;
   constructor(message: string, status?: number) { super(message); this.status = status; this.name = 'GoogleMapsError'; }
+}
+
+function validCoordinate(value: Coordinate | undefined): value is Coordinate {
+  return Boolean(value && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
+    && Math.abs(value.latitude) <= 90 && Math.abs(value.longitude) <= 180);
+}
+
+function getAddressComponent(
+  components: Array<{ longText?: string; shortText?: string; types?: string[] }>,
+  type: string,
+): string | undefined {
+  return components.find(component => component.types?.includes(type))?.longText;
+}
+
+export async function autocompletePlaces(
+  input: string,
+  apiKey: string,
+  fetcher: typeof fetch = fetch,
+): Promise<PlaceSuggestion[]> {
+  if (!apiKey.trim()) throw new GoogleMapsError('Google Maps Places API key is not configured.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetcher('https://places.googleapis.com/v1/places:autocomplete', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text',
+      },
+      body: JSON.stringify({ input, includedRegionCodes: ['ng'], languageCode: 'en' }),
+    });
+    const body = await response.json().catch(() => null) as {
+      suggestions?: Array<{ placePrediction?: { placeId?: string; text?: { text?: string } } }>;
+    } | null;
+    if (!response.ok) throw new GoogleMapsError(`Places API request failed (${response.status}).`, response.status);
+    return (body?.suggestions ?? []).flatMap(({ placePrediction }) => {
+      const placeId = placePrediction?.placeId;
+      const description = placePrediction?.text?.text;
+      return placeId && description ? [{ placeId, description }] : [];
+    });
+  } catch (error) {
+    if (error instanceof GoogleMapsError) throw error;
+    if (error instanceof Error && error.name === 'AbortError') throw new GoogleMapsError('Google Maps Places API timed out.');
+    throw new GoogleMapsError('Could not reach Google Maps Places API.');
+  } finally { clearTimeout(timeout); }
+}
+
+export async function resolvePlace(
+  placeId: string,
+  apiKey: string,
+  fetcher: typeof fetch = fetch,
+): Promise<ResolvedPlace> {
+  if (!apiKey.trim()) throw new GoogleMapsError('Google Maps Places API key is not configured.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetcher(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+      signal: controller.signal,
+      headers: {
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'formattedAddress,location,addressComponents',
+      },
+    });
+    const body = await response.json().catch(() => null) as {
+      formattedAddress?: string;
+      location?: Coordinate;
+      addressComponents?: Array<{ longText?: string; shortText?: string; types?: string[] }>;
+    } | null;
+    if (!response.ok) throw new GoogleMapsError(`Places API request failed (${response.status}).`, response.status);
+    const components = body?.addressComponents ?? [];
+    const country = components.find(component => component.types?.includes('country'))?.shortText;
+    if (country !== 'NG') throw new GoogleMapsError('Choose a location in Nigeria.');
+    const location = body?.location;
+    if (!validCoordinate(location)) throw new GoogleMapsError('Google Maps could not locate that place.');
+    const streetNumber = getAddressComponent(components, 'street_number');
+    const route = getAddressComponent(components, 'route');
+    const line1 = [streetNumber, route].filter(Boolean).join(' ')
+      || getAddressComponent(components, 'premise')
+      || getAddressComponent(components, 'sublocality_level_1')
+      || getAddressComponent(components, 'neighborhood')
+      || body?.formattedAddress;
+    const city = getAddressComponent(components, 'locality')
+      || getAddressComponent(components, 'administrative_area_level_2')
+      || getAddressComponent(components, 'administrative_area_level_1');
+    if (!line1 || !city) throw new GoogleMapsError('Google Maps could not find a complete Nigerian address.');
+    return { line1, city, ...location };
+  } catch (error) {
+    if (error instanceof GoogleMapsError) throw error;
+    if (error instanceof Error && error.name === 'AbortError') throw new GoogleMapsError('Google Maps Places API timed out.');
+    throw new GoogleMapsError('Could not reach Google Maps Places API.');
+  } finally { clearTimeout(timeout); }
 }
 
 function location(point: Coordinate) {
