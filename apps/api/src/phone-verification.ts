@@ -66,7 +66,14 @@ async function sendWhatsAppVerification(phone: string, fetcher: typeof fetch = f
       body: JSON.stringify({ messages: [{
         from: config.sender.replace(/^\+/, ''),
         to: phone.replace(/^\+/, ''),
-        content: { templateName: config.templateName, templateData: { body: { type: 'POSITIONAL_PARAMETERS', placeholders: [code] } }, language: config.language },
+        content: {
+          templateName: config.templateName,
+          templateData: {
+            body: { placeholders: [code] },
+            buttons: [{ type: 'URL', parameter: code }],
+          },
+          language: config.language,
+        },
       }] }),
       signal: AbortSignal.timeout(10_000),
     });

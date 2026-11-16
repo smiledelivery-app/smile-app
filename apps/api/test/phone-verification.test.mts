@@ -52,8 +52,8 @@ test('WhatsApp signup sends a positional code using the Infobip template API', a
   process.env.INFOBIP_BASE_URL = 'https://test.api.infobip.com';
   process.env.INFOBIP_API_KEY = 'test-api-key';
   process.env.INFOBIP_WHATSAPP_SENDER = '+2348000000000';
-  process.env.INFOBIP_WHATSAPP_TEMPLATE_NAME = 'smile_verification';
-  process.env.INFOBIP_WHATSAPP_TEMPLATE_LANGUAGE = 'en';
+  process.env.INFOBIP_WHATSAPP_TEMPLATE_NAME = 'authentication';
+  process.env.INFOBIP_WHATSAPP_TEMPLATE_LANGUAGE = 'en_GB';
 
   let requestUrl = '';
   let request: RequestInit | undefined;
@@ -68,12 +68,14 @@ test('WhatsApp signup sends a positional code using the Infobip template API', a
   assert.equal(requestUrl, 'https://test.api.infobip.com/whatsapp/1/message/template');
   assert.equal(new Headers(request?.headers).get('authorization'), 'App test-api-key');
   const payload = JSON.parse(String(request?.body)) as {
-    messages: Array<{ from: string; to: string; content: { templateName: string; language: string; templateData: { body: { type: string; placeholders: string[] } } } }>;
+    messages: Array<{ from: string; to: string; content: { templateName: string; language: string; templateData: { body: { placeholders: string[] }; buttons: Array<{ type: string; parameter: string }> } } }>;
   };
   assert.equal(payload.messages[0].from, '2348000000000');
   assert.equal(payload.messages[0].to, '2348012345678');
-  assert.equal(payload.messages[0].content.templateName, 'smile_verification');
-  assert.equal(payload.messages[0].content.language, 'en');
-  assert.equal(payload.messages[0].content.templateData.body.type, 'POSITIONAL_PARAMETERS');
+  assert.equal(payload.messages[0].content.templateName, 'authentication');
+  assert.equal(payload.messages[0].content.language, 'en_GB');
   assert.match(payload.messages[0].content.templateData.body.placeholders[0], /^\d{6}$/);
+  assert.deepEqual(payload.messages[0].content.templateData.buttons, [
+    { type: 'URL', parameter: payload.messages[0].content.templateData.body.placeholders[0] },
+  ]);
 });
