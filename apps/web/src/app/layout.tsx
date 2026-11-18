@@ -21,17 +21,20 @@ export const metadata: Metadata = {
     title: 'Smile Delivery | Food Delivery in Lagos',
     description,
     url: '/',
-    images: ['/smile-logo.png'],
+    images: ['/logo-transparent.png'],
   },
   twitter: {
     card: 'summary',
     title: 'Smile Delivery | Food Delivery in Lagos',
     description,
-    images: ['/smile-logo.png'],
+    images: ['/logo-transparent.png'],
   },
   icons: {
-    icon: '/smile-logo.png',
-    apple: '/smile-logo.png',
+    icon: [
+      { url: '/favicon.png', sizes: '48x48', type: 'image/png' },
+      { url: '/favicon-196.png', sizes: '196x196', type: 'image/png' },
+    ],
+    apple: '/icon.png',
   },
   robots: { index: true, follow: true },
 };

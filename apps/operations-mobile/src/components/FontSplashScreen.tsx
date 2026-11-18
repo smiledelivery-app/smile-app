@@ -13,7 +13,7 @@ export default function FontSplashScreen() {
   return <View style={s.screen} accessibilityLabel="Loading Smile Operations">
     <View style={s.topLine}/>
     <Animated.View style={[s.brandBlock,{transform:[{scale:pulse}]}]}>
-      <Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={s.logo}/>
+      <Image accessibilityLabel="Smile logo" source={require('../../assets/logo-transparent.png')} resizeMode="contain" style={s.logo}/>
       <Text style={s.brand}>smile</Text><Text style={s.operations}>OPERATIONS</Text>
     </Animated.View>
     <Animated.View style={[s.copy,{opacity}]}><Text style={s.kicker}>YOUR WORKSPACE</Text><Text style={s.message}>Restoring your account and getting things ready.</Text><View style={s.track}><View style={s.fill}/></View></Animated.View>

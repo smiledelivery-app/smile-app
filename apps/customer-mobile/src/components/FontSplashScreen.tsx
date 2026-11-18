@@ -26,7 +26,7 @@ export default function FontSplashScreen() {
     <View style={s.screen} accessibilityLabel="Loading Smile">
       <View style={s.topLine} />
       <Animated.View style={[s.brandBlock, { transform: [{ scale: pulse }] }]}>
-        <Image accessibilityLabel="Smile logo" source={require('../../assets/splash-icon.png')} resizeMode="contain" style={s.brandMark} />
+        <Image accessibilityLabel="Smile logo" source={require('../../assets/logo-transparent.png')} resizeMode="contain" style={s.brandMark} />
         <Text style={s.brand}>smile</Text>
       </Animated.View>
       <Animated.View style={[s.loadingCopy, { opacity }]}>

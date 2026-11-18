@@ -52,6 +52,10 @@ type PopularProduct={product:Product;vendor:Vendor};
 const demoRecentSearches=['Suya','Green Bowl','Yaba'];
 const selectedAddressStorageKey=(userId:string)=>Platform.OS==='web'?`makanza-customer-selected-address-v1:${userId}`:`makanza-customer-selected-address-v1-${userId}`;
 const hasDeliveryCoordinates=(place:SavedAddress|null|undefined):place is SavedAddress&{latitude:number|string;longitude:number|string}=>place?.latitude!==null&&place?.latitude!==undefined&&place.longitude!==null&&place.longitude!==undefined&&Number.isFinite(Number(place.latitude))&&Number.isFinite(Number(place.longitude));
+const logPhoneVerificationError=(event:string,error:unknown)=>{
+  if(error instanceof ApiError)console.error(event,{status:error.status,code:error.code,providerResponse:error.details??null});
+  else console.error(event,{errorType:error instanceof Error?error.name:'unknown'});
+};
 const createNoticeStyles=(colors:AppColors)=>StyleSheet.create({
   position:{position:'absolute',left:16,right:16,bottom:18,zIndex:20,elevation:8},
   aboveTabBar:{bottom:82},
@@ -194,9 +198,28 @@ export default function App(){
   const subtotal=useMemo(()=>cart.reduce((sum,line)=>sum+(line.product.priceMinor+line.addons.reduce((a,x)=>a+x.addon.priceMinor*x.quantity,0))*line.quantity,0),[cart]);
   const saveAuthenticatedSession=async(result:Session)=>{if(!result.user.roles.includes('CUSTOMER'))throw new Error('This account does not have customer access.');await SecureStore.setItemAsync('makanza-session',JSON.stringify(result));setSession(result);setPassword('');setNotice('You are signed in.');};
   const signIn=async(emailValue:string,passwordValue:string)=>{setBusy(true);setError('');try{const result=await api.post<Session>('/auth/login',{email:emailValue,password:passwordValue});await saveAuthenticatedSession(result);}catch(e){setError(e instanceof Error?e.message:'Could not sign in.');}finally{setBusy(false);}};
-  const beginSignup=async(nameValue:string,emailValue:string,phoneValue:string,passwordValue:string,channel:'sms'|'whatsapp'):Promise<string|null>=>{setBusy(true);setError('');try{const result=await api.post<Session|{phone:string;channel:string;expiresAt:string}>('/auth/register',{name:nameValue,email:emailValue,phone:phoneValue,password:passwordValue,channel});if('token'in result){await saveAuthenticatedSession(result);setNotice('Development signup: phone verification was skipped.');return null;}setNotice(`Verification code sent by ${channel==='sms'?'SMS':'WhatsApp'}.`);return result.phone;}catch(e){setError(e instanceof Error?e.message:'Could not start phone verification.');return null;}finally{setBusy(false);}};
+  const beginSignup=async(nameValue:string,emailValue:string,phoneValue:string,passwordValue:string,channel:'sms'|'whatsapp'):Promise<string|null>=>{
+    setBusy(true);setError('');
+    try{
+      const result=await api.post<Session|{phone:string;channel:string;expiresAt:string;providerResponse?:unknown}>('/auth/register',{name:nameValue,email:emailValue,phone:phoneValue,password:passwordValue,channel});
+      if('token'in result){await saveAuthenticatedSession(result);setNotice('Development signup: phone verification was skipped.');return null;}
+      if(channel==='whatsapp')console.log('[phone verification] signup API response',{channel:result.channel,expiresAt:result.expiresAt,providerResponse:result.providerResponse??null});
+      setNotice(`Verification code sent by ${channel==='sms'?'SMS':'WhatsApp'}.`);
+      return result.phone;
+    }catch(e){if(channel==='whatsapp')logPhoneVerificationError('[phone verification] signup API error',e);setError(e instanceof Error?e.message:'Could not start phone verification.');return null;}
+    finally{setBusy(false);}
+  };
   const verifySignupPhone=async(phoneValue:string,codeValue:string)=>{setBusy(true);setError('');try{const result=await api.post<Session>('/auth/register/verify',{phone:phoneValue,code:codeValue});await saveAuthenticatedSession(result);}catch(e){setError(e instanceof Error?e.message:'Could not verify your phone.');}finally{setBusy(false);}};
-  const resendSignupCode=async(phoneValue:string):Promise<boolean>=>{setBusy(true);setError('');try{await api.post('/auth/register/resend',{phone:phoneValue});setNotice('A new verification code was sent.');return true;}catch(e){setError(e instanceof Error?e.message:'Could not resend your verification code.');return false;}finally{setBusy(false);}};
+  const resendSignupCode=async(phoneValue:string):Promise<boolean>=>{
+    setBusy(true);setError('');
+    try{
+      const result=await api.post<{channel:string;expiresAt:string;providerResponse?:unknown}>('/auth/register/resend',{phone:phoneValue});
+      if(result.channel==='whatsapp')console.log('[phone verification] resend API response',{channel:result.channel,expiresAt:result.expiresAt,providerResponse:result.providerResponse??null});
+      setNotice('A new verification code was sent.');
+      return true;
+    }catch(e){logPhoneVerificationError('[phone verification] resend API error',e);setError(e instanceof Error?e.message:'Could not resend your verification code.');return false;}
+    finally{setBusy(false);}
+  };
   const add= (product:Product,addons:import('../screens/VendorMenuScreen').Choice[]=[],quantity=1)=>{if(!activeVendor)return;if(cart.length&&cart[0].vendorId!==activeVendor.id){setNotice('Your bag is for one kitchen at a time. Finish or clear the current bag first.');return;}const key=(xs:typeof addons)=>xs.map(x=>`${x.addon.id}:${x.quantity}`).sort().join('|');setCart(lines=>{const existing=lines.find(line=>line.product.id===product.id&&key(line.addons)===key(addons));return existing?lines.map(line=>line.id===existing.id?{...line,quantity:line.quantity+quantity}:line):[...lines,{id:`${product.id}:${key(addons)}:${Date.now()}`,product,quantity,vendorId:activeVendor.id,vendorName:activeVendor.name,addons}];});setNotice(`${quantity>1?`${quantity} × `:''}${product.name}${addons.length?` with ${addons.map(x=>`${x.quantity} ${x.addon.name}`).join(', ')}`:''} added.`);};
   const placeOrder=async()=>{if(!token&&!mobileEnv.demoMode){setScreen('profile');setNotice('Sign in to continue.');return;}if(!cart.length)return;if(!hasDeliveryCoordinates(selectedAddress)){setAddressPicker(true);setNotice('Choose a location on the map before placing your order.');return;}if(mobileEnv.demoMode){const now=new Date().toISOString();const vendor=demoVendors.find(item=>item.id===cart[0].vendorId);const totalMinor=cart.reduce((sum,line)=>sum+(line.product.priceMinor+line.addons.reduce((addonsTotal,item)=>addonsTotal+item.addon.priceMinor*item.quantity,0))*line.quantity,0)+(vendor?.fee??0)*100;const order:CustomerOrder={id:`demo-order-${Date.now()}`,status:'CONFIRMED',totalMinor,createdAt:now,vendor:{name:cart[0].vendorName},delivery:{status:'UNASSIGNED',assignedAt:null,riderName:null},items:cart.map((line,index)=>({id:`demo-line-${Date.now()}-${index}`,nameSnapshot:line.product.name,quantity:line.quantity,unitPriceMinor:line.product.priceMinor,addons:line.addons.map(item=>({id:item.addon.id,nameSnapshot:item.addon.name,quantity:item.quantity,unitPriceMinor:item.addon.priceMinor}))})),events:[{id:`demo-event-${Date.now()}`,status:'CONFIRMED',createdAt:now}]};setOrders(current=>[order,...current]);setCart([]);setScreen('orders');setNotice('Sample order placed locally. No payment or delivery request was sent.');return;}setBusy(true);setError('');try{const order=await api.post<{id:string}>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(l=>({productId:l.product.id,quantity:l.quantity,addons:l.addons.map(x=>({addonId:x.addon.id,quantity:x.quantity}))}))},token!);setCart([]);setScreen('orders');setNotice(`Order ${order.id.slice(-8)} placed. Demo checkout does not charge money.`);await loadOrders(token!);}catch(e){setError(e instanceof Error?e.message:'Could not place the order.');}finally{setBusy(false);}};
   const openVendor=async(vendor:Vendor)=>{setActiveVendor(vendor);setProducts([]);setScreen('menu');};

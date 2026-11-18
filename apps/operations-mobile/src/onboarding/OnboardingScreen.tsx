@@ -19,7 +19,7 @@ export default function OnboardingScreen({onSelectRole,onComplete,dark,onTheme}:
     <ImageBackground source={{uri:slide.image}} style={styles.image} imageStyle={styles.imageRadius}>
       <View style={styles.shade}/>
       <View style={styles.top}>
-        <View style={styles.brand}><Image accessibilityLabel="Smile logo" source={require('../../assets/smile-logo.png')} resizeMode="contain" style={styles.logo}/><Text style={styles.brandName}>smile <Text style={styles.ops}>OPS</Text></Text></View>
+        <View style={styles.brand}><Image accessibilityLabel="Smile logo" source={require('../../assets/logo-transparent.png')} resizeMode="contain" style={styles.logo}/><Text style={styles.brandName}>smile <Text style={styles.ops}>OPS</Text></Text></View>
         <View style={styles.actionsTop}>
           <Pressable accessibilityRole="button" accessibilityLabel={dark?'Switch to light mode':'Switch to dark mode'} onPress={onTheme} style={styles.theme}><Ionicons name={dark?'sunny-outline':'moon-outline'} size={21} color="white"/></Pressable>
           <Pressable accessibilityRole="button" onPress={onComplete} hitSlop={12}><Text style={styles.skip}>Skip</Text></Pressable>
