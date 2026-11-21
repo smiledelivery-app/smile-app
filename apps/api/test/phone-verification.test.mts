@@ -81,6 +81,7 @@ test('WhatsApp signup sends a positional code using the Infobip template API', a
   assert.equal(payload.messages[0].content.templateName, 'authentication');
   assert.equal(payload.messages[0].content.language, 'en_GB');
   assert.match(payload.messages[0].content.templateData.body.placeholders[0], /^\d{6}$/);
+  assert.equal(payload.messages[0].content.templateData.body.placeholders[1], '15');
   assert.deepEqual(payload.messages[0].content.templateData.buttons, [
     { type: 'URL', parameter: payload.messages[0].content.templateData.body.placeholders[0] },
   ]);

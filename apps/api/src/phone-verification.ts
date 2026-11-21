@@ -1,6 +1,7 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 
 export type PhoneVerificationChannel = 'sms' | 'whatsapp';
+export const PHONE_VERIFICATION_EXPIRY_MINUTES = 15;
 
 type ProviderResponse = { pinId?: string; verified?: boolean; status?: string; message?: string };
 type WhatsAppProviderResponse = {
@@ -88,7 +89,7 @@ async function sendWhatsAppVerification(phone: string, fetcher: typeof fetch = f
         content: {
           templateName: config.templateName,
           templateData: {
-            body: { placeholders: [code] },
+            body: { placeholders: [code, String(PHONE_VERIFICATION_EXPIRY_MINUTES)] },
             buttons: [{ type: 'URL', parameter: code }],
           },
           language: config.language,

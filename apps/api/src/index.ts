@@ -13,7 +13,7 @@ import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConf
 import { createProofCode } from './proof-codes.js';
 import { createRiderNinUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
 import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
-import { checkPhoneVerification, PhoneVerificationError, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
+import { checkPhoneVerification, PhoneVerificationError, PHONE_VERIFICATION_EXPIRY_MINUTES, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
 import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
 
@@ -410,7 +410,7 @@ app.post('/api/v1/auth/register', async (req,res,next) => {
     if(existingPending&&Date.now()-existingPending.lastSentAt.getTime()<60_000)return res.status(429).json({error:{code:'VERIFICATION_WAIT',message:'Wait one minute before requesting another verification code.'}});
     if(existingPending)await prisma.pendingPhoneSignup.delete({where:{id:existingPending.id}});
     const passwordHash=await makePasswordHash(input.data.password);
-    const pending=await prisma.pendingPhoneSignup.create({data:{name:input.data.name,email:input.data.email,phone,passwordHash,channel:input.data.channel,expiresAt:new Date(Date.now()+15*60_000)}});
+    const pending=await prisma.pendingPhoneSignup.create({data:{name:input.data.name,email:input.data.email,phone,passwordHash,channel:input.data.channel,expiresAt:new Date(Date.now()+PHONE_VERIFICATION_EXPIRY_MINUTES*60_000)}});
     let providerResponse: PhoneVerificationProviderResponse | undefined;
     try {
       const sent = await sendPhoneVerification(phone, input.data.channel as PhoneVerificationChannel);
