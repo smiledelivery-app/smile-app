@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 import type { OrderTracking } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
+import { customerPalette, customerRadius } from '../theme/customer';
 
 type Props = { tracking: OrderTracking | null; loading: boolean; error: string; colors: AppColors };
 type Coordinate = { latitude: number; longitude: number };
@@ -21,6 +22,7 @@ function MarkerBadge({ icon, color, background }: { icon: 'store' | 'bike' | 'pi
 }
 
 export default function OrderTrackingMap({ tracking, loading, error, colors: c }: Props) {
+  const p = customerPalette(c);
   const map = useRef<MapView>(null);
   const vendor = point(tracking?.vendor.latitude, tracking?.vendor.longitude);
   const customer = point(tracking?.customer.latitude, tracking?.customer.longitude);
@@ -47,38 +49,38 @@ export default function OrderTrackingMap({ tracking, loading, error, colors: c }
     else if (region) map.current?.animateToRegion(region, 350);
   };
 
-  return <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
+  return <View style={[styles.card, { backgroundColor: p.surface, borderColor: p.border }]}>
     <View style={styles.mapFrame}>
       {region ? <MapView ref={map} provider={PROVIDER_GOOGLE} style={StyleSheet.absoluteFill} initialRegion={region} showsCompass={false} showsBuildings showsTraffic={false} toolbarEnabled={false}>
-        {vendor && <Marker coordinate={vendor} title={tracking?.vendor.name ?? 'Restaurant'} description="Restaurant pickup"><MarkerBadge icon="store" color={c.green} background={c.card} /></Marker>}
-        {customer && <Marker coordinate={customer} title="Delivery address" description="Your delivery destination"><MarkerBadge icon="pin" color="#d36545" background={c.card} /></Marker>}
-        {rider && <Marker coordinate={rider} title="Your rider" description={recent ? 'Live location' : 'Last known location'} zIndex={3}><View style={[styles.riderHalo, { backgroundColor: c.isDark ? 'rgba(124,199,160,.2)' : 'rgba(29,97,71,.15)' }]}><MarkerBadge icon="bike" color="#fff" background={c.green} /></View></Marker>}
-      </MapView> : <View style={[styles.noMap, { backgroundColor: c.cream }]}>
-        <View style={[styles.noMapIcon, { backgroundColor: c.mint }]}><MapPin size={24} color={c.green} /></View>
-        <Text style={[styles.noMapTitle, { color: c.ink }]}>Your delivery map</Text>
-        <Text style={[styles.noMapCopy, { color: c.muted }]}>{!region ? 'Map pins are not available for this order yet.' : 'Google Maps SDK keys are missing from this build.'}</Text>
+        {vendor && <Marker coordinate={vendor} title={tracking?.vendor.name ?? 'Restaurant'} description="Restaurant pickup"><MarkerBadge icon="store" color={p.primary} background={p.surface} /></Marker>}
+        {customer && <Marker coordinate={customer} title="Delivery address" description="Your delivery destination"><MarkerBadge icon="pin" color={p.accent} background={p.surface} /></Marker>}
+        {rider && <Marker coordinate={rider} title="Your rider" description={recent ? 'Live location' : 'Last known location'} zIndex={3}><View style={[styles.riderHalo, { backgroundColor: c.isDark ? 'rgba(124,199,160,.2)' : 'rgba(29,97,71,.15)' }]}><MarkerBadge icon="bike" color="#fff" background={p.primary} /></View></Marker>}
+      </MapView> : <View style={[styles.noMap, { backgroundColor: p.surfaceAlt }]}>
+        <View style={[styles.noMapIcon, { backgroundColor: p.primarySoft }]}><MapPin size={24} color={p.primary} /></View>
+        <Text style={[styles.noMapTitle, { color: p.ink }]}>Your delivery map</Text>
+        <Text style={[styles.noMapCopy, { color: p.muted }]}>{!region ? 'Map pins are not available for this order yet.' : 'Google Maps SDK keys are missing from this build.'}</Text>
       </View>}
       {region && <>
-        <View style={[styles.mapTopPill, { backgroundColor: c.card }]}><View style={[styles.liveDot, { backgroundColor: rider && recent ? '#20a36b' : c.muted }]} /><Text style={[styles.mapTopText, { color: c.ink }]}>{rider && recent ? 'LIVE TRACKING' : rider ? 'LAST KNOWN LOCATION' : 'RIDER ON THE WAY'}</Text></View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Recenter delivery map" onPress={recenter} style={[styles.recenter, { backgroundColor: c.card }]}><LocateFixed size={19} color={c.ink} /></Pressable>
-        <View style={[styles.mapCaption, { backgroundColor: c.card }]}><Text style={[styles.captionText, { color: c.ink }]}>{isPickedUp ? 'Heading to you' : 'Going to restaurant'}</Text><Text style={[styles.captionSub, { color: c.muted }]}>{isPickedUp ? 'Your rider has picked up the order' : 'Your rider is heading to the pickup'}</Text></View>
+        <View style={[styles.mapTopPill, { backgroundColor: p.surface }]}><View style={[styles.liveDot, { backgroundColor: rider && recent ? '#20a36b' : p.muted }]} /><Text style={[styles.mapTopText, { color: p.ink }]}>{rider && recent ? 'LIVE TRACKING' : rider ? 'LAST KNOWN LOCATION' : 'RIDER ON THE WAY'}</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Recenter delivery map" onPress={recenter} style={[styles.recenter, { backgroundColor: p.surface }]}><LocateFixed size={19} color={p.ink} /></Pressable>
+        <View style={[styles.mapCaption, { backgroundColor: p.surface }]}><Text style={[styles.captionText, { color: p.ink }]}>{isPickedUp ? 'Heading to you' : 'Going to restaurant'}</Text><Text style={[styles.captionSub, { color: p.muted }]}>{isPickedUp ? 'Your rider has picked up the order' : 'Your rider is heading to the pickup'}</Text></View>
       </>}
     </View>
     <View style={styles.details}>
-      <View style={[styles.riderAvatar, { backgroundColor: c.mint }]}><Bike size={21} color={c.green} /></View>
+      <View style={[styles.riderAvatar, { backgroundColor: p.primarySoft }]}><Bike size={21} color={p.primary} /></View>
       <View style={styles.detailCopy}>
         <Text style={[styles.detailTitle, { color: c.ink }]}>{tracking?.rider ? isPickedUp ? 'Your order is on the way' : 'Your rider is heading to pickup' : 'Finding your rider'}</Text>
         <Text style={[styles.detailSub, { color: c.muted }]}>{tracking?.rider ? `${tracking.vendor.name} · ${locationAge === 0 ? 'Updated just now' : `Updated ${locationAge}s ago`}` : loading ? 'Waiting for rider location…' : error || 'Live location will appear when available.'}</Text>
       </View>
-      {tracking?.rider && <View style={[styles.statusChip, { backgroundColor: recent ? c.mint : c.cream }]}><View style={[styles.statusDot, { backgroundColor: recent ? c.green : c.muted }]} /><Text style={[styles.statusText, { color: recent ? c.green : c.muted }]}>{recent ? 'LIVE' : 'UPDATING'}</Text></View>}
+      {tracking?.rider && <View style={[styles.statusChip, { backgroundColor: recent ? p.primarySoft : p.surfaceAlt }]}><View style={[styles.statusDot, { backgroundColor: recent ? p.primary : p.muted }]} /><Text style={[styles.statusText, { color: recent ? p.primary : p.muted }]}>{recent ? 'LIVE' : 'UPDATING'}</Text></View>}
     </View>
   </View>;
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: 20, overflow: 'hidden', borderWidth: 1, marginBottom: 16 },
+  card: { borderRadius: customerRadius.lg, overflow: 'hidden', borderWidth: 1, marginBottom: 16 },
   mapFrame: { height: 300, overflow: 'hidden' },
-  noMap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 },
+  noMap: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 },
   noMapIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   noMapTitle: { fontSize: 16, fontWeight: '900' }, noMapCopy: { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 5 },
   mapTopPill: { position: 'absolute', top: 12, left: 12, height: 34, borderRadius: 17, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 7, elevation: 3 },

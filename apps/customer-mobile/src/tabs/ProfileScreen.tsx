@@ -4,6 +4,7 @@ import { Ionicons } from '../components/AppIcon';
 import type { Session } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { ScreenHeader } from '../components/ui';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 type Props={
   session:Session;colors:AppColors;guest:boolean;onSignOut:()=>void;onSignIn:()=>void;onEdit:()=>void;onPreferences:()=>void;
@@ -11,79 +12,91 @@ type Props={
 };
 
 export default function ProfileScreen({session,colors:c,guest,onSignOut,onSignIn,onEdit,onPreferences,onPassword,onAddresses,onFavorites,onHelp,onAbout}:Props){
-  const s=styles(c);
-  return <View style={s.screen}><ScreenHeader title="Profile" subtitle="Your account, preferences, and support" icon="person-outline" colors={c}/><ScrollView style={{flex:1}} contentContainerStyle={s.page}>
-    <View style={s.profile}>
-      <View style={s.profileTop}><View style={s.avatar}><Text style={s.avatarText}>{session.user.name.trim().slice(0,1).toUpperCase()}</Text></View><View style={s.details}>
-        <Text style={s.profileLabel}>YOUR ACCOUNT</Text>
-        <Text style={s.name}>{session.user.name}</Text>
-      </View><Pressable accessibilityRole="button" accessibilityLabel="Edit profile" onPress={onEdit} style={({pressed})=>[s.edit,pressed&&s.pressed]}>
-        <Ionicons name="create-outline" size={25} color={c.green}/>
-      </Pressable></View>
-      <View style={s.contactList}><View style={s.contactRow}><Ionicons name="call-outline" size={16} color={c.green}/><Text style={s.detail}>{session.user.phone||'Add a phone number'}</Text></View><View style={s.contactRow}><Ionicons name="mail-outline" size={16} color={c.green}/><Text style={s.detail}>{session.user.email||'No email added'}</Text></View></View>
-    </View>
-    {guest&&<Pressable accessibilityRole="button" onPress={onSignIn} style={({pressed})=>[s.signIn,pressed&&s.pressed]}><View style={s.signInIcon}><Ionicons name="log-in-outline" size={20} color={c.green}/></View><View style={s.signInCopy}><Text style={s.signInText}>Sign in to manage your account</Text><Text style={s.signInHint}>Access your saved details and preferences</Text></View><Ionicons name="arrow-forward" size={21} color={c.green}/></Pressable>}
-    <View style={s.sectionHeader}><Text style={s.section}>ACCOUNT</Text><Text style={s.sectionHint}>Personal details and saved items</Text></View>
-    <View style={s.actionGroup}>
-      <Action icon="person-outline" title="Edit profile" onPress={onEdit} c={c}/>
-      <Action icon="location-outline" title="Saved addresses" onPress={onAddresses} c={c}/>
-      <Action icon="heart-outline" title="Favourites" onPress={onFavorites} c={c}/>
-      <Action icon="lock-closed-outline" title="Change password" onPress={onPassword} c={c}/>
-    </View>
-    <View style={s.sectionHeader}><Text style={s.section}>PREFERENCES</Text><Text style={s.sectionHint}>Help and app information</Text></View>
-    <View style={s.actionGroup}>
-      <Action icon="settings-outline" title="Settings" onPress={onPreferences} c={c}/>
-      <Action icon="help-circle-outline" title="Help & support" onPress={onHelp} c={c}/>
-      <Action icon="information-circle-outline" title="About Smile" onPress={onAbout} c={c}/>
-    </View>
-    {!guest&&<Pressable accessibilityRole="button" onPress={onSignOut} style={s.signOut}>
-      <Ionicons name="log-out-outline" size={22} color="#a34232"/>
-      <Text style={s.signOutText}>Log out</Text>
-    </Pressable>}
-    <Text style={s.version}>SMILE · CUSTOMER · VERSION 0.1.0</Text>
-  </ScrollView></View>;
+  const p=customerPalette(c);
+  const s=styles(p);
+  const initial=session.user.name.trim().slice(0,1).toUpperCase()||'S';
+  return <View style={s.screen}>
+    <ScreenHeader title="You" subtitle="Your account and preferences" icon="person-outline" colors={c}/>
+    <ScrollView contentContainerStyle={s.page}>
+      <View style={s.identityCard}>
+        <View style={s.identityTop}>
+          <View style={s.avatar}><Text style={s.avatarText}>{initial}</Text></View>
+          <View style={s.identityCopy}><Text style={s.eyebrow}>{guest?'LOCAL PROFILE':'SMILE MEMBER'}</Text><Text numberOfLines={1} style={s.name}>{session.user.name}</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" onPress={onEdit} style={s.editButton}><Ionicons name="create-outline" size={19} color={p.primary}/></Pressable>
+        </View>
+        <View style={s.divider}/>
+        <View style={s.contactRow}><View style={s.contactIcon}><Ionicons name="call-outline" size={16} color={p.primary}/></View><Text numberOfLines={1} style={s.contactText}>{session.user.phone||'Add a phone number'}</Text></View>
+        <View style={s.contactRow}><View style={s.contactIcon}><Ionicons name="mail-outline" size={16} color={p.primary}/></View><Text numberOfLines={1} style={s.contactText}>{session.user.email||'No email added'}</Text></View>
+      </View>
+
+      {guest&&<Pressable accessibilityRole="button" onPress={onSignIn} style={({pressed})=>[s.signIn,pressed&&s.pressed]}>
+        <View style={s.signInIcon}><Ionicons name="log-in-outline" size={20} color={p.primary}/></View>
+        <View style={s.signInCopy}><Text style={s.signInTitle}>Connect your Smile account</Text><Text style={s.signInHint}>Keep orders and saved places with you.</Text></View>
+        <Ionicons name="arrow-forward" size={18} color={p.primary}/>
+      </Pressable>}
+
+      <View style={s.sectionHeading}><Text style={s.sectionTitle}>Your account</Text><Text style={s.sectionHint}>Details and saved places</Text></View>
+      <View style={s.actionGroup}>
+        <Action icon="person-outline" title="Personal details" onPress={onEdit} p={p}/>
+        <Action icon="location-outline" title="Saved addresses" onPress={onAddresses} p={p}/>
+        <Action icon="heart-outline" title="Favourites" onPress={onFavorites} p={p}/>
+        <Action icon="lock-closed-outline" title="Change password" onPress={onPassword} p={p} last/>
+      </View>
+
+      <View style={s.sectionHeading}><Text style={s.sectionTitle}>More</Text><Text style={s.sectionHint}>Settings and support</Text></View>
+      <View style={s.actionGroup}>
+        <Action icon="settings-outline" title="Preferences" onPress={onPreferences} p={p}/>
+        <Action icon="help-circle-outline" title="Help & support" onPress={onHelp} p={p}/>
+        <Action icon="information-circle-outline" title="About Smile" onPress={onAbout} p={p} last/>
+      </View>
+
+      {!guest&&<Pressable accessibilityRole="button" onPress={onSignOut} style={({pressed})=>[s.signOut,pressed&&s.pressed]}>
+        <Ionicons name="log-out-outline" size={18} color={p.danger}/><Text style={s.signOutText}>Sign out</Text>
+      </Pressable>}
+      <Text style={s.version}>SMILE CUSTOMER · VERSION 0.1.0</Text>
+    </ScrollView>
+  </View>;
 }
 
-function Action({icon,title,onPress,c}:{icon:'person-outline'|'location-outline'|'heart-outline'|'lock-closed-outline'|'settings-outline'|'help-circle-outline'|'information-circle-outline';title:string;onPress:()=>void;c:AppColors}){
-  const s=styles(c);
-  return <Pressable accessibilityRole="button" accessibilityHint={`Opens ${title.toLowerCase()}`} onPress={onPress} style={({pressed})=>[s.action,pressed&&s.actionPressed]}>
-    <View style={s.actionIcon}><Ionicons name={icon} size={20} color={c.green}/></View>
+function Action({icon,title,onPress,p,last=false}:{icon:string;title:string;onPress:()=>void;p:ReturnType<typeof customerPalette>;last?:boolean}){
+  const s=styles(p);
+  return <Pressable accessibilityRole="button" accessibilityHint={`Opens ${title.toLowerCase()}`} onPress={onPress} style={({pressed})=>[s.action,!last&&s.actionDivider,pressed&&s.pressed]}>
+    <View style={s.actionIcon}><Ionicons name={icon} size={18} color={p.primary}/></View>
     <Text style={s.actionTitle}>{title}</Text>
-    <View style={s.actionArrow}><Ionicons name="chevron-forward" size={18} color={c.muted}/></View>
+    <Ionicons name="chevron-forward" size={17} color={p.muted}/>
   </Pressable>;
 }
 
-const styles=(c:AppColors)=>StyleSheet.create({
-  screen:{flex:1,backgroundColor:c.paper},
-  page:{padding:20,paddingTop:12,paddingBottom:34},
-  kicker:{fontSize:11,fontWeight:'900',letterSpacing:1.2,color:c.green,marginBottom:15},
-  profile:{padding:16,borderRadius:20,backgroundColor:c.card,borderWidth:1,borderColor:c.line,marginBottom:4},
-  profileTop:{flexDirection:'row',alignItems:'center',gap:12},
-  avatar:{width:58,height:58,borderRadius:29,alignItems:'center',justifyContent:'center',backgroundColor:c.green},
-  avatarText:{fontSize:26,fontWeight:'900',color:'white'},
-  details:{flex:1,gap:4},
-  profileLabel:{fontSize:9,fontWeight:'900',letterSpacing:1.2,color:c.green},
-  name:{fontSize:19,fontWeight:'900',color:c.ink},
-  contactList:{marginTop:14,paddingTop:11,borderTopWidth:1,borderTopColor:c.line,gap:8},
-  contactRow:{flexDirection:'row',alignItems:'center',gap:9},
-  detail:{fontSize:12,color:c.muted},
-  edit:{width:40,height:40,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
-  pressed:{opacity:.78},
-  signIn:{minHeight:68,flexDirection:'row',alignItems:'center',gap:11,padding:12,marginTop:10,borderRadius:16,backgroundColor:c.mint},
-  signInIcon:{width:40,height:40,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.card},
+const styles=(p:ReturnType<typeof customerPalette>)=>StyleSheet.create({
+  screen:{flex:1,backgroundColor:p.canvas},
+  page:{paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.sm,paddingBottom:customerSpace.xxl},
+  identityCard:{padding:16,borderWidth:1,borderColor:p.border,borderRadius:customerRadius.lg,backgroundColor:p.surface},
+  identityTop:{flexDirection:'row',alignItems:'center',gap:12},
+  avatar:{width:54,height:54,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.md,backgroundColor:p.primary},
+  avatarText:{fontSize:24,fontWeight:'900',color:'white'},
+  identityCopy:{flex:1,minWidth:0},
+  eyebrow:{fontSize:9,fontWeight:'900',letterSpacing:1.1,color:p.primary},
+  name:{fontSize:18,lineHeight:24,fontWeight:'900',letterSpacing:-.5,color:p.ink,marginTop:4},
+  editButton:{width:42,height:42,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:p.primarySoft},
+  divider:{height:1,backgroundColor:p.border,marginVertical:14},
+  contactRow:{minHeight:32,flexDirection:'row',alignItems:'center',gap:9,marginTop:2},
+  contactIcon:{width:26,height:26,alignItems:'center',justifyContent:'center',borderRadius:8,backgroundColor:p.surfaceAlt},
+  contactText:{flex:1,fontSize:11,color:p.muted},
+  signIn:{minHeight:70,flexDirection:'row',alignItems:'center',gap:11,padding:12,marginTop:10,borderRadius:customerRadius.md,backgroundColor:p.primarySoft},
+  signInIcon:{width:40,height:40,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:p.surface},
   signInCopy:{flex:1},
-  signInText:{fontSize:12,fontWeight:'900',color:c.green},
-  signInHint:{fontSize:10,color:c.muted,marginTop:3},
-  sectionHeader:{marginTop:21,marginBottom:7},
-  section:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:c.muted},
-  sectionHint:{fontSize:11,color:c.muted,marginTop:3},
-  actionGroup:{paddingHorizontal:11,borderRadius:17,borderWidth:1,borderColor:c.line,backgroundColor:c.card},
-  action:{minHeight:59,paddingHorizontal:3,flexDirection:'row',alignItems:'center',gap:11,borderBottomWidth:1,borderBottomColor:c.line},
-  actionPressed:{opacity:.65},
-  actionIcon:{width:38,height:38,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
-  actionTitle:{flex:1,fontSize:13,fontWeight:'700',color:c.ink},
-  actionArrow:{width:28,height:28,borderRadius:10,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
-  signOut:{minHeight:49,flexDirection:'row',justifyContent:'center',alignItems:'center',gap:8,marginTop:22,borderRadius:14,backgroundColor:c.card},
-  signOutText:{fontSize:13,fontWeight:'800',color:'#a34232'},
-  version:{fontSize:10,letterSpacing:.8,color:c.muted,textAlign:'center',marginTop:16},
+  signInTitle:{fontSize:12,fontWeight:'900',color:p.primary},
+  signInHint:{fontSize:10,lineHeight:15,color:p.muted,marginTop:3},
+  sectionHeading:{marginTop:customerSpace.section,marginBottom:9},
+  sectionTitle:{fontSize:17,fontWeight:'900',letterSpacing:-.4,color:p.ink},
+  sectionHint:{fontSize:10,color:p.muted,marginTop:3},
+  actionGroup:{paddingHorizontal:11,borderWidth:1,borderColor:p.border,borderRadius:customerRadius.md,backgroundColor:p.surface},
+  action:{minHeight:55,flexDirection:'row',alignItems:'center',gap:10},
+  actionDivider:{borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:p.border},
+  actionIcon:{width:35,height:35,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:p.surfaceAlt},
+  actionTitle:{flex:1,fontSize:12,fontWeight:'700',color:p.ink},
+  signOut:{minHeight:48,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8,marginTop:customerSpace.xl,borderWidth:1,borderColor:p.border,borderRadius:customerRadius.md,backgroundColor:p.surface},
+  signOutText:{fontSize:12,fontWeight:'800',color:p.danger},
+  version:{fontSize:9,letterSpacing:.8,color:p.muted,textAlign:'center',marginTop:18},
+  pressed:{opacity:.72},
 });

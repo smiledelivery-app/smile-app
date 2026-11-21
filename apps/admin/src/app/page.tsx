@@ -206,18 +206,19 @@ export default function AdminPage() {
     }
   };
   const review = useMutation({
-    mutationFn: async ({ type, id, status, reason }: { type: 'vendors' | 'riders'; id: string; status: string; reason: string }) =>
-      api(`/admin/${type}/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason }) }),
+    mutationFn: async ({ type, id, status, reason, isOpen }: { type: 'vendors' | 'riders'; id: string; status: string; reason: string; isOpen?: boolean }) =>
+      api(`/admin/${type}/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason, ...(isOpen===undefined?{}:{isOpen}) }) }),
     onSuccess: () => { notify('Review decision saved and recorded.'); queryClient.invalidateQueries({ queryKey: ['vendors'] }); queryClient.invalidateQueries({ queryKey: ['riders'] }); queryClient.invalidateQueries({ queryKey: ['overview'] }); },
     onError: error => notify(error instanceof Error ? error.message : 'The review decision could not be saved.', true),
   });
 
   const canReview = (permission: 'vendors' | 'riders') => user?.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OPERATIONS_MANAGER' || role === (permission === 'vendors' ? 'VENDOR_MANAGER' : 'RIDER_MANAGER'));
-  const runReview = (type: 'vendors' | 'riders', id: string, status: 'APPROVED' | 'REJECTED' | 'SUSPENDED') => {
-    const reason = window.prompt(`Reason for ${status.toLowerCase().replace('_', ' ')}:`);
+  const runReview = (type: 'vendors' | 'riders', id: string, status: 'APPROVED' | 'REJECTED' | 'SUSPENDED', isOpen?:boolean) => {
+    const action=isOpen===true?'open store':isOpen===false?'close store':status.toLowerCase().replace('_', ' ');
+    const reason = window.prompt(`Reason for ${action}:`);
     if (reason === null) return;
     if (reason.trim().length < 5) { notify('Enter a reason with at least five characters.', true); return; }
-    if (window.confirm(`Confirm ${status.toLowerCase().replace('_', ' ')}? This decision will be added to the audit log.`)) review.mutate({ type, id, status, reason: reason.trim() });
+    if (window.confirm(`Confirm ${action}? This decision will be added to the audit log.`)) review.mutate({ type, id, status, reason: reason.trim(), ...(isOpen===undefined?{}:{isOpen}) });
   };
 
   if (!ready || !user) return <main className="boot-screen"><Image className="brand-mark-image" src="/smile-logo.png" width={32} height={32} alt="" /><span>Checking administrator session…</span></main>;
@@ -332,7 +333,7 @@ function ListView({ view, query, search, setSearch, statusFilter, setStatusFilte
   setSearch: (value: string) => void; statusFilter: string; setStatusFilter: (value: string) => void; page: number; setPage: (page: number) => void;
   orderFilters: OrderFilters; setOrderFilters: (filters: OrderFilters) => void;
   canReview: (permission: 'vendors' | 'riders') => boolean | undefined;
-  runReview: (type: 'vendors' | 'riders', id: string, status: 'APPROVED' | 'REJECTED' | 'SUSPENDED') => void;
+  runReview: (type: 'vendors' | 'riders', id: string, status: 'APPROVED' | 'REJECTED' | 'SUSPENDED', isOpen?:boolean) => void;
 }) {
   const labels: Record<typeof view, { title: string; description: string; eyebrow: string }> = {
     orders: { title: 'Orders', description: 'Search orders and inspect their customer, vendor, payment, and delivery status.', eyebrow: 'FULFILLMENT' },
@@ -358,7 +359,7 @@ function ListView({ view, query, search, setSearch, statusFilter, setStatusFilte
       {query.isLoading ? <LoadingRows /> : query.error ? <ErrorState error={query.error} /> : !data.length ? <EmptyState>Try another search or clear the selected filters.</EmptyState> : <div className="table-scroll"><table><TableHead view={view} /><tbody>
         {view === 'orders' && (data as Order[]).map(order => <tr key={order.id}><td className="mono">#{order.id.slice(-8).toUpperCase()}</td><td>{order.customer.name}<small className="table-subtext">{order.customer.phone ?? order.customer.email}</small></td><td>{order.vendor.name}</td><td>{dateLabel(order.createdAt)}</td><td><StatusBadge value={order.status} /></td><td>{order.delivery?.assignedRider?.user.name ?? 'Unassigned'}</td><td className="align-right money-cell">{money(order.totalMinor)}</td><td><details className="row-details"><summary>Details</summary><div className="details-popover"><strong>Order breakdown</strong><span>Products: {money(order.subtotalMinor)}</span><span>Delivery fee: {money(order.deliveryFeeMinor)}</span><span>Items: {order.items.map(item => `${item.quantity} × ${item.nameSnapshot}`).join(', ') || 'No item details'}</span><span>Payment: {order.payments[0] ? `${order.payments[0].provider} · ${order.payments[0].status}` : 'No payment record'}</span></div></details></td></tr>)}
         {view === 'customers' && (data as Customer[]).map(customer => <tr key={customer.id}><td>{customer.name}</td><td>{customer.email ?? '—'}</td><td>{customer.phone ?? '—'}</td><td>{customer._count.orders}</td><td>{customer._count.addresses}</td><td>{money(customer.wallet?.balanceMinor)}</td><td>{dateOnly(customer.createdAt)}</td></tr>)}
-        {view === 'vendors' && (data as Vendor[]).map(vendor => <tr key={vendor.id}><td>{vendor.name}<small className="table-subtext">{vendor.owner.name}</small></td><td>{vendor.address}</td><td><StatusBadge value={vendor.status} /></td><td>{vendor.isOpen ? 'Open' : 'Closed'}</td><td>{vendor._count.products}</td><td>{vendor._count.orders}</td><td>{dateOnly(vendor.createdAt)}</td><td>{canManage && <ReviewActions status={vendor.status} onSelect={status => runReview('vendors', vendor.id, status)} />}</td></tr>)}
+        {view === 'vendors' && (data as Vendor[]).map(vendor => <tr key={vendor.id}><td>{vendor.name}<small className="table-subtext">{vendor.owner.name}</small></td><td>{vendor.address}</td><td><StatusBadge value={vendor.status} /></td><td>{vendor.isOpen ? 'Open' : 'Closed'}</td><td>{vendor._count.products}</td><td>{vendor._count.orders}</td><td>{dateOnly(vendor.createdAt)}</td><td>{canManage && <ReviewActions status={vendor.status} isOpen={vendor.isOpen} onSelect={(status,isOpen) => runReview('vendors', vendor.id, status,isOpen)} />}</td></tr>)}
         {view === 'riders' && (data as Rider[]).map(rider => <tr key={rider.id}><td>{rider.user.name}<small className="table-subtext">{rider.user.phone ?? rider.user.email}</small></td><td>{rider.vehicleType ?? '—'}</td><td>{rider.serviceArea || '—'}</td><td><StatusBadge value={rider.status} /></td><td>{rider.available ? rider.location ? 'Available' : 'Location stale' : 'Offline'}</td><td>{rider.location ? `${dateLabel(rider.location.updatedAt)} · fresh` : 'Location unavailable'}</td><td>{rider._count.deliveries}</td><td>{canManage && <ReviewActions status={rider.status} onSelect={status => runReview('riders', rider.id, status)} />}</td></tr>)}
         {view === 'transactions' && (data as Transaction[]).map(transaction => <tr key={transaction.id}><td className="mono">{transaction.providerReference ?? transaction.id}</td><td>#{transaction.orderId.slice(-8).toUpperCase()}</td><td>{transaction.order.customer.name}</td><td>{transaction.order.vendor.name}</td><td>{transaction.provider}</td><td><StatusBadge value={transaction.status} /></td><td>{dateLabel(transaction.createdAt)}</td><td className="align-right money-cell">{money(transaction.amountMinor)}</td></tr>)}
       </tbody></table></div>}
@@ -391,8 +392,8 @@ function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'acces
   return <thead><tr>{columns[view].map((column, index) => <th key={`${column}-${index}`} className={column === 'TOTAL' || column === 'AMOUNT' ? 'align-right' : ''}>{column}</th>)}</tr></thead>;
 }
 
-function ReviewActions({ status, onSelect }: { status: string; onSelect: (status: 'APPROVED' | 'REJECTED' | 'SUSPENDED') => void }) {
-  return <div className="review-actions">{status !== 'APPROVED' && <Button className="button button-compact button-primary" onClick={() => onSelect('APPROVED')}>Approve</Button>}{status !== 'REJECTED' && <Button variant="outline" className="button button-compact button-secondary" onClick={() => onSelect('REJECTED')}>Reject</Button>}{status !== 'SUSPENDED' && status === 'APPROVED' && <Button variant="destructive" className="button button-compact button-danger" onClick={() => onSelect('SUSPENDED')}>Suspend</Button>}</div>;
+function ReviewActions({ status, isOpen, onSelect }: { status: string; isOpen?:boolean; onSelect: (status: 'APPROVED' | 'REJECTED' | 'SUSPENDED',isOpen?:boolean) => void }) {
+  return <div className="review-actions">{status !== 'APPROVED' && <Button className="button button-compact button-primary" onClick={() => onSelect('APPROVED')}>{isOpen===undefined?'Approve':'Approve & open'}</Button>}{status === 'APPROVED'&&isOpen===false&&<Button className="button button-compact button-primary" onClick={()=>onSelect('APPROVED',true)}>Open store</Button>}{status === 'APPROVED'&&isOpen===true&&<Button variant="outline" className="button button-compact button-secondary" onClick={()=>onSelect('APPROVED',false)}>Close store</Button>}{status !== 'REJECTED' && <Button variant="outline" className="button button-compact button-secondary" onClick={() => onSelect('REJECTED')}>Reject</Button>}{status !== 'SUSPENDED' && status === 'APPROVED' && <Button variant="destructive" className="button button-compact button-danger" onClick={() => onSelect('SUSPENDED')}>Suspend</Button>}</div>;
 }
 
 function AuditView({ query }: { query: UseQueryResult<AuditEntry[], Error> }) {

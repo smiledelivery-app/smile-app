@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '../components/AppIcon';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 import AddressMapPicker from './AddressMapPicker';
 
 export type SavedAddress = { id: string; label: string; line1: string; city: string; latitude: number | string | null; longitude: number | string | null };
@@ -37,6 +38,7 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
   const [searchError, setSearchError] = useState('');
   const [resolving, setResolving] = useState(false);
   const s = styles(c);
+  const p = customerPalette(c);
 
   const load = async () => {
     if (!token) return;
@@ -284,7 +286,7 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
       </View>
       <ScrollView style={s.formScroll} contentContainerStyle={s.formContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
         <View style={s.searchWrap}>
-          <Ionicons name="search-outline" size={20} color={c.green}/>
+          <Ionicons name="search-outline" size={20} color={p.primary}/>
           <TextInput
             value={locationQuery}
             onChangeText={(value: string) => {
@@ -303,7 +305,7 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
             autoCapitalize="words"
             autoCorrect={false}
           />
-          {suggestionsLoading || resolving ? <ActivityIndicator color={c.green}/> : null}
+          {suggestionsLoading || resolving ? <ActivityIndicator color={p.primary}/> : null}
         </View>
         {suggestions.length > 0 && <View style={s.suggestions}>
           {suggestions.map((item, index) => <Pressable
@@ -312,7 +314,7 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
             onPress={() => void chooseSuggestion(item)}
             style={[s.suggestion, index < suggestions.length - 1 && s.suggestionBorder]}
           >
-            <View style={s.suggestionIcon}><Ionicons name="location-outline" size={18} color={c.green}/></View>
+            <View style={s.suggestionIcon}><Ionicons name="location-outline" size={18} color={p.primary}/></View>
             <Text style={s.suggestionText}>{item.description}</Text>
             <Ionicons name="chevron-forward" size={17} color={c.muted}/>
           </Pressable>)}
@@ -370,28 +372,28 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
           </Pressable>
         </View>
         {!manageMode && <Pressable disabled={saving} onPress={() => void useCurrentLocation()} style={s.current}>
-          <View style={s.currentIcon}><Ionicons name="navigate" size={20} color={c.green}/></View>
+          <View style={s.currentIcon}><Ionicons name="navigate" size={20} color={p.primary}/></View>
           <View style={s.placeCopy}>
             <Text style={s.placeTitle}>{saving ? 'Finding your location…' : 'Use my current location'}</Text>
             <Text style={s.body}>Pin your device’s current position</Text>
           </View>
-          {saving ? <ActivityIndicator color={c.green}/> : <Ionicons name="chevron-forward" size={18} color={c.green}/>}
+          {saving ? <ActivityIndicator color={p.primary}/> : <Ionicons name="chevron-forward" size={18} color={p.primary}/>}
         </Pressable>}
         {token && <Pressable onPress={startNew} style={s.add}>
-          <View style={s.addIcon}><Ionicons name="add" size={22} color={c.green}/></View>
+          <View style={s.addIcon}><Ionicons name="add" size={22} color={p.primary}/></View>
           <Text style={s.addText}>Add a delivery place</Text>
-          <Ionicons name="chevron-forward" size={18} color={c.green}/>
+          <Ionicons name="chevron-forward" size={18} color={p.primary}/>
         </Pressable>}
         <Text style={s.savedHeading}>{manageMode ? 'SAVED PLACES' : 'SAVED DELIVERY PLACES'}</Text>
-        {loading ? <ActivityIndicator color={c.green} style={s.loading}/> : error ? <Text style={s.error}>{error}</Text>
+        {loading ? <ActivityIndicator color={p.primary} style={s.loading}/> : error ? <Text style={s.error}>{error}</Text>
           : places.length === 0 ? <View style={s.empty}>
-            <View style={s.emptyIcon}><Ionicons name="map-outline" size={24} color={c.green}/></View>
+            <View style={s.emptyIcon}><Ionicons name="map-outline" size={24} color={p.primary}/></View>
             <Text style={s.emptyTitle}>No saved places yet</Text>
             <Text style={s.body}>Add a place and choose its exact location on the map.</Text>
           </View>
           : <ScrollView style={s.list} keyboardShouldPersistTaps="handled">{places.map(place => <View key={place.id} style={s.placeRow}>
             <Pressable accessibilityRole="button" onPress={() => chooseSavedPlace(place)} style={s.placeSelect}>
-              <View style={s.placeIcon}><Ionicons name={place.label.toLowerCase().includes('home') ? 'home-outline' : place.label.toLowerCase().includes('work') ? 'briefcase-outline' : 'location-outline'} size={19} color={c.green}/></View>
+              <View style={s.placeIcon}><Ionicons name={place.label.toLowerCase().includes('home') ? 'home-outline' : place.label.toLowerCase().includes('work') ? 'briefcase-outline' : 'location-outline'} size={19} color={p.primary}/></View>
               <View style={s.placeCopy}>
                 <Text style={s.placeTitle}>{place.label}</Text>
                 <Text style={s.body} numberOfLines={2}>{place.line1}, {place.city}</Text>
@@ -409,67 +411,70 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
   </Modal>;
 }
 
-const styles = (c: AppColors) => StyleSheet.create({
-  fullScreen: { flex: 1, backgroundColor: c.paper },
-  formHeader: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: c.line },
-  formHeaderCopy: { flex: 1 },
-  formTitle: { fontSize: 19, lineHeight: 25, fontWeight: '900', color: c.ink, marginTop: 2 },
-  iconButton: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cream },
-  formScroll: { flex: 1 },
-  formContent: { padding: 16, paddingBottom: 20 },
-  searchWrap: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, borderColor: c.line, backgroundColor: c.card },
-  searchInput: { flex: 1, height: 52, color: c.ink, fontSize: 14 },
-  suggestions: { marginTop: 8, paddingHorizontal: 11, borderWidth: 1, borderColor: c.line, borderRadius: 16, backgroundColor: c.card },
-  suggestion: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  suggestionBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.line },
-  suggestionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: c.mint },
-  suggestionText: { flex: 1, fontSize: 12, lineHeight: 18, color: c.ink },
-  instruction: { fontSize: 11, lineHeight: 16, fontWeight: '700', color: c.muted, marginTop: 16, marginBottom: 2 },
-  selectedLocation: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 15, backgroundColor: c.mint },
-  selectedIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.green },
-  selectedCopy: { flex: 1 },
-  selectedTitle: { fontSize: 11, fontWeight: '900', color: c.green },
-  selectedAddress: { fontSize: 12, lineHeight: 17, color: c.ink, marginTop: 2 },
-  coordinates: { fontSize: 9, color: c.muted },
-  fieldLabel: { fontSize: 12, fontWeight: '900', color: c.ink, marginTop: 18, marginBottom: 9 },
-  labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, backgroundColor: c.cream },
-  chipActive: { backgroundColor: c.green },
-  chipText: { fontSize: 11, fontWeight: '800', color: c.ink },
-  chipTextActive: { color: 'white' },
-  nameInput: { height: 48, borderWidth: 1, borderColor: c.line, borderRadius: 14, backgroundColor: c.card, color: c.ink, paddingHorizontal: 13, fontSize: 14, marginTop: 10 },
-  footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderTopColor: c.line, backgroundColor: c.paper },
-  saveButton: { minHeight: 52, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: c.green },
-  saveDisabled: { opacity: .48 },
-  saveText: { fontSize: 14, fontWeight: '900', color: 'white' },
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(12,25,17,.48)' },
-  sheet: { maxHeight: '88%', backgroundColor: c.paper, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 18, paddingTop: 9, paddingBottom: 24 },
-  grabber: { width: 38, height: 4, borderRadius: 4, backgroundColor: c.line, alignSelf: 'center', marginBottom: 15 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
-  headerCopy: { flex: 1 },
-  kicker: { fontSize: 9, letterSpacing: 1.15, fontWeight: '900', color: c.green },
-  title: { fontSize: 23, lineHeight: 29, fontWeight: '900', letterSpacing: -.5, color: c.ink, marginTop: 5 },
-  headerSub: { fontSize: 11, lineHeight: 16, color: c.muted, marginTop: 4 },
-  current: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 17, backgroundColor: c.mint, marginBottom: 9 },
-  currentIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.card },
-  placeCopy: { flex: 1, gap: 3 },
-  placeTitle: { fontSize: 13, fontWeight: '900', color: c.ink },
-  body: { fontSize: 11, lineHeight: 16, color: c.muted },
-  add: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10, borderWidth: 1, borderColor: c.line, borderRadius: 16, backgroundColor: c.card, marginBottom: 18 },
-  addIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cream },
-  addText: { flex: 1, fontSize: 12, fontWeight: '900', color: c.green },
-  savedHeading: { fontSize: 9, letterSpacing: 1, fontWeight: '900', color: c.muted, marginBottom: 9 },
-  list: { maxHeight: 300 },
-  placeRow: { paddingHorizontal: 10, borderWidth: 1, borderColor: c.line, borderRadius: 15, backgroundColor: c.card, marginBottom: 8 },
-  placeSelect: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9 },
-  placeIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cream },
-  pinRequired: { fontSize: 10, fontWeight: '800', color: '#a34232', marginTop: 3 },
-  placeActions: { flexDirection: 'row', gap: 18, paddingLeft: 49, paddingBottom: 10 },
-  link: { fontSize: 11, fontWeight: '900', color: c.green },
-  remove: { fontSize: 11, fontWeight: '900', color: '#a34232' },
-  loading: { margin: 22 },
-  empty: { alignItems: 'center', gap: 7, padding: 18 },
-  emptyIcon: { width: 48, height: 48, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: c.mint },
-  emptyTitle: { fontSize: 13, fontWeight: '900', color: c.ink },
-  error: { fontSize: 11, lineHeight: 17, color: '#a34232', marginTop: 9 },
-});
+const styles = (colors: AppColors) => {
+  const c = customerPalette(colors);
+  return StyleSheet.create({
+    fullScreen: { flex: 1, backgroundColor: c.canvas },
+    formHeader: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: customerSpace.lg, borderBottomWidth: 1, borderBottomColor: c.border },
+    formHeaderCopy: { flex: 1 },
+    formTitle: { fontSize: 18, lineHeight: 24, fontWeight: '900', color: c.ink, marginTop: 2 },
+    iconButton: { width: 42, height: 42, borderRadius: customerRadius.md, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surfaceAlt },
+    formScroll: { flex: 1 },
+    formContent: { padding: customerSpace.lg, paddingBottom: customerSpace.xl },
+    searchWrap: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderRadius: customerRadius.md, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
+    searchInput: { flex: 1, height: 52, color: c.ink, fontSize: 14 },
+    suggestions: { marginTop: 8, paddingHorizontal: 11, borderWidth: 1, borderColor: c.border, borderRadius: customerRadius.md, backgroundColor: c.surface },
+    suggestion: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    suggestionBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
+    suggestionIcon: { width: 36, height: 36, borderRadius: customerRadius.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: c.primarySoft },
+    suggestionText: { flex: 1, fontSize: 12, lineHeight: 18, color: c.ink },
+    instruction: { fontSize: 11, lineHeight: 16, fontWeight: '700', color: c.muted, marginTop: 16, marginBottom: 2 },
+    selectedLocation: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: customerRadius.md, backgroundColor: c.primarySoft },
+    selectedIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.primary },
+    selectedCopy: { flex: 1 },
+    selectedTitle: { fontSize: 11, fontWeight: '900', color: c.primary },
+    selectedAddress: { fontSize: 12, lineHeight: 17, color: c.ink, marginTop: 2 },
+    coordinates: { fontSize: 9, color: c.muted },
+    fieldLabel: { fontSize: 12, fontWeight: '900', color: c.ink, marginTop: 18, marginBottom: 9 },
+    labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 8, borderRadius: customerRadius.pill, backgroundColor: c.surfaceAlt },
+    chipActive: { backgroundColor: c.primary },
+    chipText: { fontSize: 11, fontWeight: '800', color: c.ink },
+    chipTextActive: { color: 'white' },
+    nameInput: { minHeight: 50, borderWidth: 1, borderColor: c.border, borderRadius: customerRadius.sm, backgroundColor: c.surface, color: c.ink, paddingHorizontal: 13, fontSize: 14, marginTop: 10 },
+    footer: { paddingHorizontal: customerSpace.lg, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.canvas },
+    saveButton: { minHeight: 52, borderRadius: customerRadius.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: c.primary },
+    saveDisabled: { opacity: .48 },
+    saveText: { fontSize: 13, fontWeight: '900', color: 'white' },
+    backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(12,25,17,.48)' },
+    sheet: { maxHeight: '88%', backgroundColor: c.canvas, borderTopLeftRadius: customerRadius.xl, borderTopRightRadius: customerRadius.xl, paddingHorizontal: customerSpace.lg, paddingTop: 9, paddingBottom: customerSpace.xl },
+    grabber: { width: 38, height: 4, borderRadius: 4, backgroundColor: c.border, alignSelf: 'center', marginBottom: 15 },
+    header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+    headerCopy: { flex: 1 },
+    kicker: { fontSize: 9, letterSpacing: 1.15, fontWeight: '900', color: c.primary },
+    title: { fontSize: 22, lineHeight: 28, fontWeight: '900', letterSpacing: -.5, color: c.ink, marginTop: 5 },
+    headerSub: { fontSize: 11, lineHeight: 16, color: c.muted, marginTop: 4 },
+    current: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: customerRadius.md, backgroundColor: c.primarySoft, marginBottom: 9 },
+    currentIcon: { width: 42, height: 42, borderRadius: customerRadius.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface },
+    placeCopy: { flex: 1, gap: 3 },
+    placeTitle: { fontSize: 13, fontWeight: '900', color: c.ink },
+    body: { fontSize: 11, lineHeight: 16, color: c.muted },
+    add: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10, borderWidth: 1, borderColor: c.border, borderRadius: customerRadius.md, backgroundColor: c.surface, marginBottom: 18 },
+    addIcon: { width: 36, height: 36, borderRadius: customerRadius.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surfaceAlt },
+    addText: { flex: 1, fontSize: 12, fontWeight: '900', color: c.primary },
+    savedHeading: { fontSize: 9, letterSpacing: 1, fontWeight: '900', color: c.muted, marginBottom: 9 },
+    list: { maxHeight: 300 },
+    placeRow: { paddingHorizontal: 10, borderWidth: 1, borderColor: c.border, borderRadius: customerRadius.md, backgroundColor: c.surface, marginBottom: 8 },
+    placeSelect: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9 },
+    placeIcon: { width: 38, height: 38, borderRadius: customerRadius.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surfaceAlt },
+    pinRequired: { fontSize: 10, fontWeight: '800', color: c.danger, marginTop: 3 },
+    placeActions: { flexDirection: 'row', gap: 18, paddingLeft: 49, paddingBottom: 10 },
+    link: { fontSize: 11, fontWeight: '900', color: c.primary },
+    remove: { fontSize: 11, fontWeight: '900', color: c.danger },
+    loading: { margin: 22 },
+    empty: { alignItems: 'center', gap: 7, padding: 18 },
+    emptyIcon: { width: 48, height: 48, borderRadius: customerRadius.md, alignItems: 'center', justifyContent: 'center', backgroundColor: c.primarySoft },
+    emptyTitle: { fontSize: 13, fontWeight: '900', color: c.ink },
+    error: { fontSize: 11, lineHeight: 17, color: c.danger, marginTop: 9 },
+  });
+};

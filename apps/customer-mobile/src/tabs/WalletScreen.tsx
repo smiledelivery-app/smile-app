@@ -1,11 +1,12 @@
 import { AppText as Text } from '@makanza/mobile-ui';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
 import { ScreenHeader } from '../components/ui';
 import PaystackCheckoutModal from './PaystackCheckoutModal';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 type Transaction = {
   id: string;
@@ -32,9 +33,12 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
   onSignIn: () => void;
 }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [balanceMinor, setBalanceMinor] = useState(2_345_000);
-  const [balanceAvailable,setBalanceAvailable]=useState(true);
+  const [balanceMinor, setBalanceMinor] = useState(0);
+  const [balanceAvailable,setBalanceAvailable]=useState(false);
   const [balanceFromApi,setBalanceFromApi]=useState(false);
+  const [dva,setDva]=useState<WalletSummary['dva']|null>(null);
+  const [dvaError,setDvaError]=useState('');
+  const [dvaRetryBusy,setDvaRetryBusy]=useState(false);
   const [loading, setLoading] = useState(!!token);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>('ALL');
@@ -42,7 +46,25 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
   const [notice, setNotice] = useState('');
   const [checkout,setCheckout]=useState<{authorizationUrl:string;reference:string}|null>(null);
   const [topUpBusy,setTopUpBusy]=useState(false);
-  const s = styles(colors);
+  const p=customerPalette(colors);
+  const s = styles(p);
+
+  const refreshWallet=useCallback(async()=>{
+    if(!token)return;
+    try{
+      const wallet=await api.get<WalletSummary>('/wallet',token);
+      setBalanceMinor(wallet.balanceMinor);
+      setBalanceAvailable(true);
+      setBalanceFromApi(true);
+      setDva(wallet.dva);
+      setDvaError('');
+    }catch(reason){
+      const message=reason instanceof Error?reason.message:'Could not load wallet details.';
+      setBalanceAvailable(false);
+      setError(message);
+      setDvaError(message);
+    }
+  },[token]);
 
   useEffect(() => {
     if (demoMode) {
@@ -52,35 +74,53 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
         { id: 'demo-wallet-3', amountMinor: 180000, status: 'FAILED', provider: 'LOCAL_DEMO', isDemo: true, createdAt: new Date(Date.now() - 172_800_000).toISOString(), order: { id: 'demo-order-1027', vendor: { name: 'Suya Corner' } } },
       ]);
       setBalanceMinor(2_345_000);
+      setBalanceAvailable(true);
+      setDva(null);
+      setDvaError('');
       setLoading(false);
       setError('');
       return;
     }
     if (!token) {
       setTransactions([]);
-      setBalanceMinor(2_345_000);
+      setBalanceMinor(0);
       setBalanceFromApi(false);
-      setBalanceAvailable(true);
+      setBalanceAvailable(false);
+      setDva(null);
+      setDvaError('');
       setLoading(false);
       setError('');
       return;
     }
 
     let active = true;
-    setBalanceMinor(2_345_000);
+    setBalanceMinor(0);
     setBalanceFromApi(false);
-    setBalanceAvailable(true);
+    setBalanceAvailable(false);
+    setDva(null);
+    setDvaError('');
     setLoading(true);
     setError('');
     api.get<WalletSummary>('/wallet',token)
-      .then(wallet=>{if(active){setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);}})
-      .catch(reason=>{if(active)setError(reason instanceof Error?reason.message:'Could not load wallet balance.');});
+      .then(wallet=>{if(active){setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);setDva(wallet.dva);}})
+      .catch(reason=>{if(active){const message=reason instanceof Error?reason.message:'Could not load wallet balance.';setError(message);setDvaError(message);}});
     api.get<Transaction[]>('/wallet/transactions', token)
       .then(rows => { if (active) setTransactions(rows); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load transactions.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [demoMode, token]);
+
+  useEffect(()=>{
+    if(demoMode||!token||dva?.status!=='PENDING')return;
+    let active=true;
+    const timer=setInterval(()=>{
+      void api.get<WalletSummary>('/wallet',token)
+        .then(wallet=>{if(active){setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);setDva(wallet.dva);setDvaError('');}})
+        .catch(reason=>{if(active)setDvaError(reason instanceof Error?reason.message:'Could not refresh dedicated account status.');});
+    },5000);
+    return()=>{active=false;clearInterval(timer);};
+  },[demoMode,token,dva?.status]);
 
   const visibleTransactions = useMemo(() => transactions.filter(transaction => {
     if (filter === 'ALL') return true;
@@ -109,7 +149,7 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
   const closeCheckout=()=>{
     setCheckout(null);
     setNotice('Checkout closed. A successful payment will be added after Paystack confirms it.');
-    if(token)void api.get<WalletSummary>('/wallet',token).then(wallet=>{setBalanceMinor(wallet.balanceMinor);setBalanceAvailable(true);setBalanceFromApi(true);}).catch(()=>undefined);
+    if(token)void refreshWallet();
   };
 
   const verifyTopUp=async(reference:string)=>{
@@ -123,23 +163,61 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     }catch(reason){setNotice(reason instanceof Error?`Payment returned from checkout, but confirmation is still pending: ${reason.message}`:'Payment confirmation is still pending. Check your wallet again shortly.');}
   };
 
+  const retryDva=async()=>{
+    if(!token){onSignIn();return;}
+    setDvaRetryBusy(true);
+    setDvaError('');
+    try{
+      const result=await api.post<{status:string}>('/wallet/dva/retry',{},token);
+      setDva(current=>current?{...current,status:result.status}:{accountNumber:null,accountName:null,bankName:null,bankSlug:null,status:result.status});
+      setNotice(result.status==='ACTIVE'?'Your dedicated account is ready.':'Account setup was restarted. This screen will update automatically.');
+      await refreshWallet();
+    }catch(reason){
+      setDvaError(reason instanceof Error?reason.message:'Could not retry dedicated account setup.');
+    }finally{
+      setDvaRetryBusy(false);
+    }
+  };
+
   return <View style={s.screen}><ScreenHeader title="Wallet" subtitle="Balance, payments, and activity" icon="card-outline" colors={colors}/><ScrollView style={{flex:1}} contentContainerStyle={s.content}>
     <Text style={s.kicker}>PAYMENTS & BALANCE</Text>
 
     <View style={s.balanceCard}>
       <View style={s.balanceTop}>
-        <View style={s.walletMark}><Ionicons name="card-outline" size={23} color="#d8e5df"/></View>
+        <View style={s.walletMark}><Ionicons name="card-outline" size={21} color="white"/></View>
         <Text style={s.balanceCaption}>WALLET BALANCE</Text>
         <Pressable accessibilityRole="button" accessibilityLabel={balanceVisible ? 'Hide wallet balance' : 'Show wallet balance'} onPress={() => setBalanceVisible(value => !value)} style={s.eyeButton}>
           <Ionicons name={balanceVisible ? 'eye-outline' : 'eye-off-outline'} size={24} color="white"/>
         </Pressable>
       </View>
-      <Text style={s.balance}>{balanceVisible ? balanceAvailable ? `₦${(balanceMinor / 100).toLocaleString('en-NG')}` : 'Unavailable' : '••••••••'}</Text>
+      <Text style={s.balance}>{balanceVisible ? balanceAvailable ? `₦${(balanceMinor / 100).toLocaleString('en-NG')}` : token?'Unavailable':'Sign in' : '••••••••'}</Text>
       <Text style={s.balanceNote}>{demoMode?'Demo wallet balance':balanceFromApi?'Wallet balance · NGN':token?error||'Loading your balance':'Sign in to view your balance'}</Text>
       <Pressable accessibilityRole="button" disabled={topUpBusy} onPress={startTopUp} style={[s.topUpButton,topUpBusy&&{opacity:.65}]}>
-        <Ionicons name="add" size={24} color="#1d6147"/>
+        <Ionicons name="add" size={21} color={p.primary}/>
         <Text style={s.topUpText}>{topUpBusy?'Opening Paystack...':demoMode ? 'Simulate +₦5,000' : 'Top up +₦5,000'}</Text>
       </Pressable>
+    </View>
+
+    <View style={s.dvaCard}>
+      <View style={s.dvaHeading}>
+        <View style={s.dvaIcon}><Ionicons name="business-outline" size={19} color={p.primary}/></View>
+        <View style={{flex:1}}><Text style={s.dvaTitle}>Your dedicated bank account</Text><Text style={s.dvaSubtitle}>Transfer money into your Smile wallet</Text></View>
+        {dva?.status==='ACTIVE'&&dva.accountNumber?<Text style={s.dvaReady}>READY</Text>:null}
+      </View>
+      {demoMode?<Text style={s.dvaCopy}>Dedicated accounts are available to registered, non-demo accounts.</Text>
+      :!token?<View><Text style={s.dvaCopy}>Sign in to view or set up your personal account.</Text><Pressable accessibilityRole="button" onPress={onSignIn} style={s.dvaButton}><Text style={s.dvaButtonText}>Sign in</Text></Pressable></View>
+      :dva?.status==='ACTIVE'&&dva.accountNumber?<View style={s.accountDetails}>
+        <Text style={s.accountLabel}>{dva.bankName??'Dedicated account'}</Text>
+        <Text selectable style={s.accountNumber}>{dva.accountNumber}</Text>
+        <Text selectable style={s.accountName}>{dva.accountName??'Account name unavailable'}</Text>
+        <Text style={s.dvaCopy}>Use this account number for bank transfers. Funds received are credited to your Smile wallet.</Text>
+      </View>
+      :dva?.status==='PENDING'?<View style={s.dvaStatusRow}><ActivityIndicator color={p.primary}/><Text style={s.dvaCopy}>Your account is being set up. This screen checks for updates automatically.</Text></View>
+      :dva?.status==='FAILED'?<View><Text style={s.dvaCopy}>We couldn’t set up your dedicated account. Check that your profile has a valid email and phone number, then retry. If it keeps failing, Paystack may need to enable dedicated accounts for your business.</Text><Pressable accessibilityRole="button" disabled={dvaRetryBusy} onPress={()=>void retryDva()} style={[s.dvaButton,dvaRetryBusy&&{opacity:.65}]}><Text style={s.dvaButtonText}>{dvaRetryBusy?'Retrying…':'Retry account setup'}</Text></Pressable>{dvaError?<Text style={s.dvaError}>{dvaError}</Text>:null}</View>
+      :dva?.status==='ACTIVE'?<Text style={s.dvaError}>{dvaError||'Your account is active, but its details are unavailable. Please contact support.'}</Text>
+      :dvaError?<Text style={s.dvaError}>{dvaError}</Text>
+      :<View style={s.dvaStatusRow}><ActivityIndicator color={p.primary}/><Text style={s.dvaCopy}>Loading your account details…</Text></View>}
+      {dvaError&&dva?.status==='PENDING'?<Text style={s.dvaError}>{dvaError}</Text>:null}
     </View>
 
     {notice ? <View accessibilityRole="alert" style={s.notice}><Text style={s.noticeText}>{notice}</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={() => setNotice('')}><Ionicons name="close" size={21} color={colors.green}/></Pressable></View> : null}
@@ -153,7 +231,7 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
           .then(setTransactions)
           .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load transactions.'))
           .finally(() => setLoading(false));
-      }} style={s.refreshButton}><Ionicons name="refresh-outline" size={22} color={colors.green}/></Pressable>}
+      }} style={s.refreshButton}><Ionicons name="refresh-outline" size={20} color={p.primary}/></Pressable>}
     </View>
 
     <View style={s.filters}>{filters.map(item => {
@@ -164,7 +242,7 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
     })}</View>
 
     {!token&&!demoMode ? <View style={s.empty}>
-      <View style={s.emptyIcon}><Ionicons name="person-outline" size={25} color={colors.green}/></View>
+      <View style={s.emptyIcon}><Ionicons name="person-outline" size={23} color={p.primary}/></View>
       <Text style={s.emptyTitle}>Sign in to see your transactions</Text>
       <Text style={s.emptyCopy}>Your payment history is private to your account.</Text>
       <Pressable accessibilityRole="button" onPress={onSignIn} style={s.signInButton}><Text style={s.signInText}>Sign in</Text></Pressable>
@@ -172,22 +250,23 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn }: {
       <Text style={s.emptyTitle}>Transactions unavailable</Text>
       <Text style={s.emptyCopy}>{error}</Text>
     </View> : visibleTransactions.length === 0 ? <View style={s.empty}>
-      <View style={s.emptyIcon}><Ionicons name="receipt-outline" size={25} color={colors.green}/></View>
+      <View style={s.emptyIcon}><Ionicons name="receipt-outline" size={23} color={p.primary}/></View>
       <Text style={s.emptyTitle}>{transactions.length ? `No ${filter === 'ALL' ? '' : filter.toLowerCase() + ' '}transactions` : 'No transactions yet'}</Text>
       <Text style={s.emptyCopy}>{transactions.length ? 'Try another filter to see more activity.' : 'Your order payments will appear here when available.'}</Text>
     </View> : visibleTransactions.map(transaction => <TransactionRow key={transaction.id} transaction={transaction} colors={colors}/>)}
 
-    <Text style={s.disclaimer}>{demoMode ? 'LOCAL PREVIEW: sample wallet records and simulated top-ups never represent real charges.' : 'Demo payment records are clearly marked and never represent real charges.'}</Text>
+    <Text style={s.disclaimer}>{demoMode ? 'LOCAL PREVIEW · Sample records and simulated top-ups never represent real charges.' : 'Demo payment records are clearly marked and never represent real charges.'}</Text>
   </ScrollView>{checkout&&<PaystackCheckoutModal visible authorizationUrl={checkout.authorizationUrl} reference={checkout.reference} colors={colors} onClose={closeCheckout} onPaymentReturn={verifyTopUp}/>}</View>;
 }
 
 function TransactionRow({ transaction, colors }: { transaction: Transaction; colors: AppColors }) {
-  const s = styles(colors);
+  const p=customerPalette(colors);
+  const s = styles(p);
   const status = transaction.status.toUpperCase();
   const successful = status === 'SUCCEEDED' || status === 'SUCCESS';
   const pending = status === 'PENDING';
   const icon = successful ? 'checkmark' : pending ? 'time-outline' : 'close';
-  const color = successful ? '#28865b' : pending ? '#b17a25' : '#b84b42';
+  const color = successful ? p.primary : pending ? p.warning : p.danger;
   return <View style={s.transaction}>
     <View style={[s.transactionIcon, { backgroundColor: `${color}18` }]}><Ionicons name={icon} size={21} color={color}/></View>
     <View style={s.transactionInfo}>
@@ -199,46 +278,60 @@ function TransactionRow({ transaction, colors }: { transaction: Transaction; col
   </View>;
 }
 
-const styles = (c: AppColors) => StyleSheet.create({
-  screen: { flex: 1, backgroundColor: c.paper },
-  content: { paddingHorizontal: 19, paddingTop: 25, paddingBottom: 32 },
-  kicker: { fontSize: 11, fontWeight: '900', letterSpacing: 1.2, color: c.green },
-  title: { fontSize: 36, fontWeight: '900', letterSpacing: -1, color: c.ink, marginTop: 7, marginBottom: 18 },
-  balanceCard: { padding: 18, borderRadius: 22, backgroundColor: c.green, overflow: 'hidden' },
-  balanceTop: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  walletMark: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,.14)' },
-  balanceCaption: { flex: 1, fontSize: 11, fontWeight: '900', letterSpacing: 1, color: '#e5efdc' },
-  eyeButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  balance: { fontSize: 34, fontWeight: '900', letterSpacing: -.5, color: 'white', marginTop: 15 },
-  balanceNote: { fontSize: 12, lineHeight: 18, color: '#e5efdc', marginTop: 4 },
-  topUpButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#d8e5df', paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, marginTop: 16 },
-  topUpText: { fontSize: 12, fontWeight: '900', color: '#1d6147' },
-  notice: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: 12, marginTop: 12, borderRadius: 12, backgroundColor: c.cream },
-  noticeText: { flex: 1, fontSize: 12, lineHeight: 18, color: c.green },
-  historyHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 25 },
-  historyTitle: { fontSize: 19, fontWeight: '900', color: c.ink },
-  historySubtitle: { fontSize: 12, color: c.muted, marginTop: 3 },
-  refreshButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: c.cream },
-  filters: { flexDirection: 'row', gap: 8, marginTop: 15, marginBottom: 5 },
-  filter: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 20, backgroundColor: c.cream },
-  filterSelected: { backgroundColor: c.green },
-  filterText: { fontSize: 11, fontWeight: '800', color: c.muted },
-  filterTextSelected: { color: 'white' },
-  loader: { margin: 30 },
-  empty: { alignItems: 'center', padding: 20, marginTop: 14, borderRadius: 17, backgroundColor: c.card },
-  emptyIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cream },
-  emptyTitle: { fontSize: 15, fontWeight: '900', color: c.ink, marginTop: 10, textAlign: 'center' },
-  emptyCopy: { fontSize: 12, lineHeight: 18, color: c.muted, marginTop: 4, textAlign: 'center' },
-  signInButton: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 11, backgroundColor: c.green, marginTop: 12 },
-  signInText: { fontSize: 12, fontWeight: '900', color: 'white' },
-  transaction: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, marginTop: 9, borderRadius: 15, backgroundColor: c.card },
-  transactionIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  transactionInfo: { flex: 1 },
-  vendor: { fontSize: 13, fontWeight: '800', color: c.ink },
-  transactionMeta: { fontSize: 11, color: c.muted, marginTop: 3 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 5 },
-  status: { fontSize: 10, fontWeight: '900' },
-  demo: { fontSize: 9, fontWeight: '900', letterSpacing: .5, color: '#97751b' },
-  amount: { fontSize: 13, fontWeight: '900', color: c.ink },
-  disclaimer: { fontSize: 11, lineHeight: 17, color: c.muted, marginTop: 16 },
+const styles = (c: ReturnType<typeof customerPalette>) => StyleSheet.create({
+  screen:{flex:1,backgroundColor:c.canvas},
+  content:{paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.md,paddingBottom:customerSpace.xxl},
+  kicker:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:c.primary},
+  balanceCard:{padding:18,borderRadius:customerRadius.lg,backgroundColor:c.balance,overflow:'hidden'},
+  balanceTop:{flexDirection:'row',alignItems:'center',gap:9},
+  walletMark:{width:36,height:36,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:'rgba(255,255,255,.14)'},
+  balanceCaption:{flex:1,fontSize:10,fontWeight:'900',letterSpacing:1,color:'#edf4e9'},
+  eyeButton:{width:42,height:42,alignItems:'center',justifyContent:'center'},
+  balance:{fontSize:34,lineHeight:40,fontWeight:'900',letterSpacing:-1,color:'white',marginTop:13},
+  balanceNote:{fontSize:11,lineHeight:16,color:'#e4eee5',marginTop:3},
+  topUpButton:{minHeight:42,alignSelf:'flex-start',flexDirection:'row',alignItems:'center',gap:5,backgroundColor:'#f0f3e8',paddingHorizontal:12,borderRadius:customerRadius.sm,marginTop:14},
+  topUpText:{fontSize:11,fontWeight:'900',color:'#174b36'},
+  dvaCard:{padding:15,marginTop:11,borderRadius:customerRadius.lg,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},
+  dvaHeading:{flexDirection:'row',alignItems:'center',gap:10},
+  dvaIcon:{width:38,height:38,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+  dvaTitle:{fontSize:14,fontWeight:'900',color:c.ink},
+  dvaSubtitle:{fontSize:10,lineHeight:15,color:c.muted,marginTop:3},
+  dvaReady:{fontSize:9,fontWeight:'900',letterSpacing:.6,color:c.primary},
+  accountDetails:{padding:13,marginTop:12,borderRadius:customerRadius.md,backgroundColor:c.surfaceAlt},
+  accountLabel:{fontSize:10,fontWeight:'900',letterSpacing:.7,color:c.primary},
+  accountNumber:{fontSize:24,lineHeight:31,fontWeight:'900',letterSpacing:1,color:c.ink,marginTop:5},
+  accountName:{fontSize:11,fontWeight:'800',color:c.ink,marginTop:3},
+  dvaCopy:{flex:1,fontSize:11,lineHeight:17,color:c.muted,marginTop:9},
+  dvaStatusRow:{flexDirection:'row',alignItems:'center',gap:10,marginTop:4},
+  dvaButton:{minHeight:40,alignSelf:'flex-start',alignItems:'center',justifyContent:'center',paddingHorizontal:13,borderRadius:customerRadius.sm,backgroundColor:c.primary,marginTop:11},
+  dvaButtonText:{fontSize:11,fontWeight:'900',color:'white'},
+  dvaError:{fontSize:11,lineHeight:17,color:c.danger,marginTop:8},
+  notice:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:8,padding:12,marginTop:11,borderRadius:customerRadius.sm,backgroundColor:c.primarySoft},
+  noticeText:{flex:1,fontSize:11,lineHeight:17,color:c.primary},
+  historyHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:customerSpace.section},
+  historyTitle:{fontSize:18,fontWeight:'900',letterSpacing:-.4,color:c.ink},
+  historySubtitle:{fontSize:10,color:c.muted,marginTop:3},
+  refreshButton:{width:42,height:42,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},
+  filters:{flexDirection:'row',gap:7,marginTop:12,marginBottom:3},
+  filter:{minHeight:34,justifyContent:'center',paddingHorizontal:12,borderRadius:customerRadius.pill,backgroundColor:c.surfaceAlt},
+  filterSelected:{backgroundColor:c.primary},
+  filterText:{fontSize:10,fontWeight:'800',color:c.muted},
+  filterTextSelected:{color:'white'},
+  loader:{margin:28},
+  empty:{alignItems:'center',padding:20,marginTop:12,borderRadius:customerRadius.lg,backgroundColor:c.surface},
+  emptyIcon:{width:42,height:42,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+  emptyTitle:{fontSize:14,fontWeight:'900',color:c.ink,marginTop:10,textAlign:'center'},
+  emptyCopy:{fontSize:11,lineHeight:17,color:c.muted,marginTop:4,textAlign:'center'},
+  signInButton:{minHeight:40,justifyContent:'center',paddingHorizontal:17,borderRadius:customerRadius.sm,backgroundColor:c.primary,marginTop:12},
+  signInText:{fontSize:11,fontWeight:'900',color:'white'},
+  transaction:{flexDirection:'row',alignItems:'center',gap:10,padding:12,marginTop:8,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface},
+  transactionIcon:{width:36,height:36,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center'},
+  transactionInfo:{flex:1},
+  vendor:{fontSize:12,fontWeight:'800',color:c.ink},
+  transactionMeta:{fontSize:10,color:c.muted,marginTop:3},
+  statusRow:{flexDirection:'row',alignItems:'center',gap:6,marginTop:5},
+  status:{fontSize:9,fontWeight:'900'},
+  demo:{fontSize:8,fontWeight:'900',letterSpacing:.5,color:c.warning},
+  amount:{fontSize:12,fontWeight:'900',color:c.ink},
+  disclaimer:{fontSize:9,lineHeight:14,color:c.muted,marginTop:15},
 });

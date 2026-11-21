@@ -20,6 +20,7 @@ import TabBar from '../components/TabBar';
 import { api } from '../services/api';
 import { formatMoney as money, makeIdempotencyKey } from '../utils/format';
 import { darkColors, lightColors, type AppColors } from '../theme/colors';
+import { customerPalette, customerRadius } from '../theme/customer';
 import type { CustomerScreen } from './types';
 import VendorMenuScreen from '../screens/VendorMenuScreen';
 import CartScreen from '../screens/CartScreen';
@@ -56,14 +57,17 @@ const logPhoneVerificationError=(event:string,error:unknown)=>{
   if(error instanceof ApiError)console.error(event,{status:error.status,code:error.code,providerResponse:error.details??null});
   else console.error(event,{errorType:error instanceof Error?error.name:'unknown'});
 };
-const createNoticeStyles=(colors:AppColors)=>StyleSheet.create({
-  position:{position:'absolute',left:16,right:16,bottom:18,zIndex:20,elevation:8},
-  aboveTabBar:{bottom:82},
-  toast:{minHeight:58,flexDirection:'row',alignItems:'center',gap:10,padding:10,borderRadius:16,borderWidth:1,borderColor:colors.line,backgroundColor:colors.card,shadowColor:'#000',shadowOpacity:.12,shadowRadius:12,shadowOffset:{width:0,height:5}},
-  icon:{width:36,height:36,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:colors.mint},
-  message:{flex:1,fontSize:13,lineHeight:19,fontWeight:'600',color:colors.ink},
-  dismiss:{width:36,height:36,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:colors.cream},
-});
+const createNoticeStyles=(colors:AppColors)=>{
+  const c=customerPalette(colors);
+  return StyleSheet.create({
+    position:{position:'absolute',left:16,right:16,bottom:18,zIndex:20,elevation:8},
+    aboveTabBar:{bottom:82},
+    toast:{minHeight:58,flexDirection:'row',alignItems:'center',gap:10,padding:10,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.surface,shadowColor:'#000',shadowOpacity:.12,shadowRadius:12,shadowOffset:{width:0,height:5}},
+    icon:{width:36,height:36,borderRadius:10,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+    message:{flex:1,fontSize:12,lineHeight:18,fontWeight:'600',color:c.ink},
+    dismiss:{width:36,height:36,borderRadius:10,alignItems:'center',justifyContent:'center',backgroundColor:c.surfaceAlt},
+  });
+};
 
 export default function App(){
   const [session,setSession]=useState<Session|null>(null);
@@ -104,6 +108,7 @@ export default function App(){
   const [demoCancellationMeter,setDemoCancellationMeter]=useState({day:'',count:0});
   const [autoRefresh,setAutoRefresh]=useState(true);
   const colors=colorMode==='dark'?darkColors:lightColors;
+  const palette=customerPalette(colors);
   const styles=createStyles(colors);
   const toastStyles=createNoticeStyles(colors);
   const isDark=colorMode==='dark';
@@ -234,16 +239,33 @@ export default function App(){
   const signOut=async()=>{if(token&&pushToken)try{await api.delete('/notifications/devices',token,{token:pushToken});}catch(reason){setNotice(reason instanceof Error?`Push device could not be unregistered: ${reason.message}`:'Push device could not be unregistered.');}if(token)void api.post('/auth/logout',{},token).catch(()=>undefined);setPushToken('');await SecureStore.deleteItemAsync('makanza-session');setSession(null);setSelectedAddress(null);setOrders([]);setNotificationInbox({items:[],unreadCount:0});setNotice('You have signed out.');setScreen('home');};
   const chooseAddress=(place:SavedAddress)=>{setSelectedAddress(place);if(session)void SecureStore.setItemAsync(selectedAddressStorageKey(session.user.id),place.id).catch(()=>setNotice('Selected address could not be saved on this device.'));};
 
-  const Button=({title,onPress,secondary=false,disabled=false}:{title:string;onPress:()=>void;secondary?:boolean;disabled?:boolean})=><Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button,secondary&&styles.buttonSecondary,disabled&&styles.disabled]}><Text style={[styles.buttonText,secondary&&styles.buttonSecondaryText]}>{title}</Text></Pressable>;
-  const State=({message,action}:{message:string;action?:()=>void})=><View style={styles.state}><Text style={styles.stateText}>{message}</Text>{action&&<Button title="Try again" secondary onPress={action}/>}</View>;
-
   const finishOnboarding=async()=>{setHasOnboarded(true);setOnboardingReady(true);await SecureStore.setItemAsync('makanza-customer-onboarding-v1','complete').catch(()=>undefined);};
   if(!onboardingReady||!authReady||!preferencesReady||!catalogReady)return <FontSplashScreen/>;
   if(!hasOnboarded)return <OnboardingScreen onComplete={()=>void finishOnboarding()} onSignIn={()=>{setScreen('profile');void finishOnboarding();}}/>;
   if(!session)return <AuthNavigator dark={isDark} busy={busy} loginError={error} signupError={error} onLogin={(email,password)=>void signIn(email,password)} onSignup={beginSignup} onVerifyPhone={(phone,code)=>void verifySignupPhone(phone,code)} onResendPhone={resendSignupCode} onTheme={toggleTheme}/>;
 
   const primaryTab=(['home','search','orders','wallet','profile'] as const).includes(screen as 'home'|'search'|'orders'|'wallet'|'profile');
-  return <SafeAreaView style={styles.safe}><StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={colors.paper} translucent={false}/>  {screen==='home'&&<View style={styles.header}><View><Text style={styles.locationCaption}>DELIVERING TO</Text><Pressable accessibilityRole="button" accessibilityLabel="Choose delivery location" style={styles.locationRow} onPress={()=>setAddressPicker(true)}><Ionicons name="location-outline" size={21} color={colors.green}/><Text style={styles.locationName}>{selectedAddress?.label??'Choose your location'}</Text><Ionicons name="chevron-down" size={17} color={colors.green}/></Pressable></View><View style={{flexDirection:'row',alignItems:'center',gap:8}}><Pressable accessibilityRole="button" accessibilityLabel={`${notificationInbox.unreadCount} unread notifications`} onPress={()=>{setScreen('notifications');if(token)void loadOrders(token);}} style={styles.themeToggle}><Ionicons name="notifications-outline" size={23} color={colors.green}/>{notificationInbox.unreadCount>0&&<View style={styles.notificationDot}/>}</Pressable><Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={styles.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={22} color={colors.green}/></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Shopping cart, ${cart.reduce((n,l)=>n+l.quantity,0)} items`} onPress={()=>setScreen('bag')} style={styles.bagButton}><Ionicons name="cart-outline" size={26} color={colors.green}/>{cart.reduce((n,l)=>n+l.quantity,0)>0&&<View style={styles.bagCount}><Text style={styles.bagCountText}>{cart.reduce((n,l)=>n+l.quantity,0)}</Text></View>}</Pressable></View></View>}
+  return <SafeAreaView style={styles.safe}><StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={palette.canvas} translucent={false}/>{screen==='home'&&<View style={styles.header}>
+    <View style={{flex:1,minWidth:0}}>
+      <Text style={styles.locationCaption}>DELIVER TO</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Choose delivery location" style={styles.locationRow} onPress={()=>setAddressPicker(true)}>
+        <Ionicons name="location-outline" size={18} color={palette.primary}/>
+        <Text numberOfLines={1} style={styles.locationName}>{selectedAddress?.label??'Choose your location'}</Text>
+        <Ionicons name="chevron-down" size={16} color={palette.primary}/>
+      </Pressable>
+    </View>
+    <View style={{flexDirection:'row',alignItems:'center',gap:7,marginLeft:8}}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${notificationInbox.unreadCount} unread notifications`} onPress={()=>{setScreen('notifications');if(token)void loadNotifications(token);}} style={[styles.themeToggle,{width:44,height:44,alignItems:'center',justifyContent:'center',padding:0}]}>
+        <Ionicons name="notifications-outline" size={20} color={palette.primary}/>{notificationInbox.unreadCount>0&&<View style={styles.notificationDot}/>}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={[styles.themeToggle,{width:44,height:44,alignItems:'center',justifyContent:'center',padding:0}]}>
+        <Ionicons name={isDark?'sunny-outline':'moon-outline'} size={20} color={palette.primary}/>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Shopping cart, ${cart.reduce((n,l)=>n+l.quantity,0)} items`} onPress={()=>setScreen('bag')} style={styles.bagButton}>
+        <Ionicons name="cart-outline" size={22} color={palette.primary}/>{cart.reduce((n,l)=>n+l.quantity,0)>0&&<View style={styles.bagCount}><Text style={styles.bagCountText}>{cart.reduce((n,l)=>n+l.quantity,0)}</Text></View>}
+      </Pressable>
+    </View>
+  </View>}
     {screen==='home'&&<HomeScreen vendors={vendors} userLocation={homeLocation} popularProducts={popularProducts} popularLoading={popularLoading} popularError={popularError} loading={loading} error={error} query={query} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);setScreen('search');void loadVendors(searchTerm);}} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/>}
     {screen==='search'&&<SearchScreen query={query} recentSearches={recentSearches} vendors={vendors} loading={loading&&vendors.length===0} error={error} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);void loadVendors(searchTerm);}} onRecentSearch={term=>{setQuery(term);recordRecentSearch(term);void loadVendors(term);}} onClearRecent={clearRecentSearches} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/> }
     {screen==='wallet'&&<WalletScreen token={token??null} demoMode={mobileEnv.demoMode} colors={colors} onSignIn={()=>setScreen('profile')}/>}
@@ -268,7 +290,7 @@ export default function App(){
     <AddressPickerModal visible={addressPicker} token={token??null} colors={colors} manageMode={screen==='addresses'} onClose={()=>{setAddressPicker(false);if(screen==='addresses')goBack();}} onSelect={place=>{chooseAddress(place);if(screen==='addresses')goBack();}} onSignIn={()=>{setAddressPicker(false);setScreen('profile');}}/>
     {notice?<View pointerEvents="box-none" accessibilityLiveRegion="polite" style={[toastStyles.position,primaryTab&&toastStyles.aboveTabBar]}>
       <View style={toastStyles.toast}>
-        <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={colors.green}/></View>
+        <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={palette.primary}/></View>
         <Text style={toastStyles.message}>{notice}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss notification" onPress={()=>setNotice('')} style={toastStyles.dismiss}><Ionicons name="close" size={19} color={colors.muted}/></Pressable>
       </View>
@@ -276,4 +298,18 @@ export default function App(){
   </SafeAreaView>;
 }
 
-const createStyles=(colors:AppColors)=>StyleSheet.create({safe:{flex:1,backgroundColor:colors.paper},demoBanner:{minHeight:30,paddingHorizontal:12,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6,backgroundColor:colors.cream},demoBannerText:{fontSize:10,fontWeight:'900',letterSpacing:.45,color:colors.green},themeToggle:{paddingHorizontal:8,paddingVertical:7,borderRadius:12,backgroundColor:colors.cream},themeToggleText:{fontSize:11,fontWeight:'800',color:colors.green},flex:{flex:1},header:{height:68,paddingHorizontal:18,backgroundColor:colors.paper,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:1,borderBottomColor:colors.line},locationCaption:{fontSize:10,letterSpacing:1.1,color:colors.muted,fontWeight:'800'},locationRow:{flexDirection:'row',alignItems:'center',gap:5,marginTop:3},locationPin:{fontSize:21,color:colors.green},locationName:{fontSize:13,color:colors.ink,fontWeight:'700'},locationChevron:{fontSize:17,color:colors.green},brand:{fontSize:19,fontWeight:'900',color:colors.ink,letterSpacing:-.6},brandMark:{backgroundColor:colors.isDark?'#1d6147':colors.green,color:colors.mint,overflow:'hidden',borderRadius:7,fontFamily:'serif',paddingHorizontal:6,paddingVertical:1},brandAccent:{color:colors.accent},bagButton:{width:42,height:42,backgroundColor:'#f6f5f2',borderRadius:21,alignItems:'center',justifyContent:'center'},notificationDot:{position:'absolute',right:5,top:3,width:8,height:8,borderRadius:4,backgroundColor:colors.accent,borderWidth:1,borderColor:colors.paper},bagIcon:{fontSize:28,color:colors.green},bagCount:{position:'absolute',right:-2,top:-2,minWidth:18,height:18,borderRadius:10,backgroundColor:colors.accent,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:colors.paper},bagCountText:{fontSize:11,color:'white',fontWeight:'800'},notice:{padding:10,backgroundColor:'#e6f0ea',marginHorizontal:15,marginTop:8,borderRadius:9},noticeText:{fontSize:13,color:colors.green},hero:{height:214,marginHorizontal:16,marginTop:13,padding:19,borderRadius:22,overflow:'hidden',justifyContent:'center',backgroundColor:colors.green},heroImage:{borderRadius:22},heroShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(18,43,32,.50)'},heroContent:{zIndex:1},heroKicker:{fontSize:11,letterSpacing:1.5,fontWeight:'900',color:colors.mint,marginBottom:8},heroTitle:{fontSize:31,fontWeight:'800',letterSpacing:-.9,lineHeight:36,color:'white'},heroSubtitle:{fontSize:13,lineHeight:19,color:'#f2f4e9',marginTop:6,maxWidth:250},heroPill:{alignSelf:'flex-start',backgroundColor:colors.mint,paddingHorizontal:12,paddingVertical:7,borderRadius:20,marginTop:13},heroPillText:{fontSize:11,fontWeight:'800',color:colors.green},heroEmoji:{position:'absolute',right:17,top:12,color:colors.mint,fontSize:35},searchWrap:{height:48,marginHorizontal:16,marginTop:13,marginBottom:13,paddingHorizontal:12,backgroundColor:colors.cream,borderRadius:14,flexDirection:'row',alignItems:'center',gap:9},searchIcon:{fontSize:25,color:colors.green},search:{flex:1,height:46,fontSize:15,color:colors.ink},filterIcon:{fontSize:24,color:colors.green,paddingHorizontal:5},categoryRow:{flexDirection:'row',gap:9,paddingHorizontal:16,paddingVertical:4},category:{minWidth:64,alignItems:'center',gap:5},categoryActive:{},categoryIcon:{width:46,height:46,textAlign:'center',textAlignVertical:'center',borderRadius:16,overflow:'hidden',backgroundColor:colors.cream,fontSize:25,color:colors.green},categoryText:{fontSize:11,color:colors.muted,fontWeight:'600'},categoryTextActive:{color:colors.green,fontWeight:'800'},sectionHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginHorizontal:17,marginTop:20,marginBottom:3},sectionTitle:{fontSize:22,fontWeight:'800',letterSpacing:-.5,color:colors.ink},sectionSub:{fontSize:12,color:colors.muted,marginTop:3},seeAll:{fontSize:11,letterSpacing:.7,fontWeight:'800',color:colors.green},eyebrow:{fontSize:11,letterSpacing:1.3,fontWeight:'800',color:'#4f5451',marginBottom:10},title:{fontSize:37,fontWeight:'700',letterSpacing:-1.2,lineHeight:43,color:colors.ink},subtitle:{fontSize:16,lineHeight:23,color:colors.muted,marginTop:8,marginBottom:15},button:{minHeight:43,borderRadius:12,backgroundColor:colors.green,alignItems:'center',justifyContent:'center',paddingHorizontal:16,marginTop:7},buttonText:{color:colors.isDark?'#17231b':'white',fontSize:15,fontWeight:'700'},buttonSecondary:{backgroundColor:colors.card,borderWidth:1,borderColor:colors.line},buttonSecondaryText:{color:colors.green},disabled:{opacity:.55},list:{paddingBottom:10},vendorCard:{marginHorizontal:16,marginTop:12,padding:10,borderRadius:17,borderWidth:1,borderColor:colors.line,backgroundColor:colors.card,gap:11,flexDirection:'row',alignItems:'center',shadowColor:'#34462e',shadowOpacity:.05,shadowRadius:12,shadowOffset:{width:0,height:5},elevation:2},vendorImage:{width:91,height:91,borderRadius:13,backgroundColor:'#f6f5f2'},vendorCopy:{flex:1,gap:5},vendorTopLine:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:5},vendorName:{fontSize:16,fontWeight:'800',color:colors.ink,flexShrink:1},rating:{fontSize:12,fontWeight:'800',color:'#4f5451'},mutedText:{fontSize:12,lineHeight:18,color:colors.muted},vendorMeta:{flexDirection:'row',alignItems:'center',gap:5,marginTop:2},metaBadge:{fontSize:11,color:colors.muted},metaDot:{fontSize:11,color:'#aabbb1'},chevron:{fontSize:25,color:'#aabbb1',paddingHorizontal:4},demoTag:{fontSize:10,fontWeight:'800',letterSpacing:.7,color:'#4f5451'},spinner:{margin:24},state:{padding:22,alignItems:'center',gap:10},stateText:{fontSize:15,color:colors.muted,textAlign:'center',lineHeight:22},page:{padding:19,gap:12,paddingBottom:34},productCard:{flexDirection:'row',alignItems:'center',gap:12,padding:13,borderWidth:1,borderColor:colors.line,borderRadius:15,backgroundColor:colors.card,marginTop:8},productCopy:{flex:1,gap:5},productName:{fontSize:16,fontWeight:'700',color:colors.ink},price:{fontSize:15,fontWeight:'700',color:colors.green,marginTop:4},quantity:{flexDirection:'row',alignItems:'center',gap:12},qtyButton:{fontSize:25,color:colors.green,paddingHorizontal:5},total:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',paddingVertical:12,borderTopWidth:1,borderTopColor:colors.line,marginTop:5},fieldLabel:{fontSize:13,fontWeight:'700',color:colors.ink,marginTop:7},input:{height:47,borderWidth:1,borderColor:colors.line,borderRadius:12,paddingHorizontal:12,fontSize:15,color:colors.ink,backgroundColor:colors.card},errorText:{fontSize:13,color:'#9f2f2d',marginVertical:8},switchText:{color:colors.green,fontSize:13,textAlign:'center',marginTop:16},orderCard:{padding:15,borderRadius:15,borderWidth:1,borderColor:colors.line,backgroundColor:'white',gap:9,marginTop:10},row:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},status:{fontSize:11,color:colors.green,textTransform:'capitalize',backgroundColor:colors.cream,padding:6,borderRadius:8}});
+const createStyles=(colors:AppColors)=>{
+  const c=customerPalette(colors);
+  return StyleSheet.create({
+    safe:{flex:1,backgroundColor:c.canvas},
+    header:{minHeight:68,paddingHorizontal:16,backgroundColor:c.canvas,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
+    locationCaption:{fontSize:9,letterSpacing:1,color:c.muted,fontWeight:'900'},
+    locationRow:{flexDirection:'row',alignItems:'center',gap:5,marginTop:3},
+    locationName:{fontSize:13,color:c.ink,fontWeight:'800',flexShrink:1},
+    themeToggle:{paddingHorizontal:8,paddingVertical:7,borderRadius:customerRadius.md,backgroundColor:c.surfaceAlt},
+    notificationDot:{position:'absolute',right:5,top:3,width:8,height:8,borderRadius:4,backgroundColor:c.accent,borderWidth:1,borderColor:c.canvas},
+    bagButton:{width:44,height:44,backgroundColor:c.surface,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,alignItems:'center',justifyContent:'center'},
+    bagCount:{position:'absolute',right:-2,top:-2,minWidth:18,height:18,borderRadius:10,backgroundColor:c.accent,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:c.canvas},
+    bagCountText:{fontSize:10,color:'white',fontWeight:'900'},
+  });
+};

@@ -12,3 +12,7 @@ export function catalogSource(canAccessDemo:boolean):CatalogSource {
 export function shouldUseMockCheckout(vendorIsDemo:boolean,canAccessDemo:boolean):boolean {
   return vendorIsDemo&&canAccessDemo;
 }
+
+export function vendorIsOpenAfterReview(status:'APPROVED'|'REJECTED'|'SUSPENDED',requestedIsOpen?:boolean):boolean {
+  return status==='APPROVED'?(requestedIsOpen??true):false;
+}

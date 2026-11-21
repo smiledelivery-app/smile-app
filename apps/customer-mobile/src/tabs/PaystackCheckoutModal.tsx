@@ -5,6 +5,7 @@ import { WebView } from 'react-native-webview';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '../components/AppIcon';
 import type { AppColors } from '../theme/colors';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 type Props={visible:boolean;authorizationUrl:string;reference:string;colors:AppColors;onClose:()=>void;onPaymentReturn:(reference:string)=>void};
 const bridgeScript=`(function(){var previous='';var sendLocation=function(){var current=window.location.href;if(current!==previous&&window.ReactNativeWebView){previous=current;window.ReactNativeWebView.postMessage(current);}};sendLocation();window.addEventListener('pageshow',sendLocation);setInterval(sendLocation,500);})();true;`;
@@ -31,4 +32,19 @@ export default function PaystackCheckoutModal({visible,authorizationUrl,referenc
   </Modal>;
 }
 
-const styles=(c:AppColors)=>StyleSheet.create({screen:{flex:1,backgroundColor:c.paper},header:{minHeight:66,flexDirection:'row',alignItems:'center',paddingHorizontal:16,borderBottomWidth:1,borderBottomColor:c.line,backgroundColor:c.card},close:{width:42,height:42,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},heading:{flex:1,paddingHorizontal:12},title:{fontSize:16,fontWeight:'900',color:c.ink},subtitle:{fontSize:11,color:c.muted,marginTop:3},lock:{width:38,height:38,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},webview:{flex:1,overflow:'hidden'},footer:{minHeight:60,flexDirection:'row',alignItems:'center',gap:10,paddingHorizontal:17,paddingVertical:10,borderTopWidth:1,borderTopColor:c.line,backgroundColor:c.card},footerIcon:{width:32,height:32,borderRadius:11,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},footerText:{flex:1,fontSize:11,lineHeight:16,color:c.muted}});
+const styles=(colors:AppColors)=>{
+  const c=customerPalette(colors);
+  return StyleSheet.create({
+    screen:{flex:1,backgroundColor:c.canvas},
+    header:{minHeight:70,flexDirection:'row',alignItems:'center',paddingHorizontal:customerSpace.lg,borderBottomWidth:1,borderBottomColor:c.border,backgroundColor:c.surface},
+    close:{width:42,height:42,borderRadius:customerRadius.md,alignItems:'center',justifyContent:'center',backgroundColor:c.surfaceAlt},
+    heading:{flex:1,paddingHorizontal:customerSpace.md},
+    title:{fontSize:16,fontWeight:'900',color:c.ink},
+    subtitle:{fontSize:11,color:c.muted,marginTop:3},
+    lock:{width:38,height:38,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+    webview:{flex:1,overflow:'hidden'},
+    footer:{minHeight:64,flexDirection:'row',alignItems:'center',gap:10,paddingHorizontal:customerSpace.lg,paddingVertical:10,borderTopWidth:1,borderTopColor:c.border,backgroundColor:c.surface},
+    footerIcon:{width:34,height:34,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+    footerText:{flex:1,fontSize:11,lineHeight:16,color:c.muted},
+  });
+};

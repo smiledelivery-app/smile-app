@@ -4,6 +4,7 @@ import { forwardRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native';
 import { radius, semantic, space, typeScale } from '../theme/tokens';
 import type { AppColors } from '../theme/colors';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 type ButtonProps = Omit<PressableProps, 'style'> & { title: string; colors: AppColors; variant?: 'primary'|'secondary'|'ghost'|'danger'; loading?: boolean; style?: StyleProp<ViewStyle> };
 export function Button({ title, colors, variant='primary', loading=false, disabled, style, ...props }: ButtonProps) {
@@ -26,18 +27,18 @@ export const Input = forwardRef<any, TextInputProps & { colors: AppColors; label
 });
 
 export function SectionHeader({ title, subtitle, action, colors, onAction }: { title:string; subtitle?:string; action?:string; colors:AppColors; onAction?:()=>void }) {
-  const c=semantic(colors);
-  return <View style={s.sectionHeader}><View style={s.sectionCopy}><Text style={[typeScale.headline,{color:c.textPrimary}]}>{title}</Text>{subtitle?<Text style={[typeScale.caption,{color:c.textSecondary,marginTop:3}]}>{subtitle}</Text>:null}</View>{action&&onAction?<Pressable accessibilityRole="button" onPress={onAction} hitSlop={8}><Text style={[s.action,{color:c.primary}]}>{action}</Text></Pressable>:null}</View>;
+  const c=customerPalette(colors);
+  return <View style={[s.sectionHeader,{marginHorizontal:customerSpace.lg,marginTop:customerSpace.section,marginBottom:customerSpace.sm}]}><View style={s.sectionCopy}><Text style={[typeScale.headline,{color:c.ink,letterSpacing:-.6}]}>{title}</Text>{subtitle?<Text style={[typeScale.caption,{color:c.muted,marginTop:3}]}>{subtitle}</Text>:null}</View>{action&&onAction?<Pressable accessibilityRole="button" onPress={onAction} hitSlop={8}><Text style={[s.action,{color:c.primary}]}>{action}</Text></Pressable>:null}</View>;
 }
 
 export function ScreenHeader({ title, subtitle, icon, colors, eyebrow='' }: { title:string; subtitle?:string; icon?:string; colors:AppColors; eyebrow?:string }) {
-  const c=semantic(colors);
-  return <View style={s.screenHeader}>{icon ? <View style={[s.screenHeaderIcon,{backgroundColor:colors.isDark?'#203b2d':'#e6f0ea'}]}><Ionicons name={icon} size={22} color={c.primary}/></View> : null}<View style={s.screenHeaderCopy}>{eyebrow ? <Text style={[typeScale.label,{color:c.textSecondary,marginBottom:4}]}>{eyebrow}</Text> : null}<Text style={[typeScale.headline,{color:c.textPrimary}]}>{title}</Text>{subtitle ? <Text style={[typeScale.caption,{color:c.textSecondary,marginTop:6}]}>{subtitle}</Text> : null}</View></View>;
+  const c=customerPalette(colors);
+  return <View style={[s.screenHeader,{paddingHorizontal:customerSpace.lg,paddingVertical:customerSpace.md,backgroundColor:c.canvas}]}>{icon ? <View style={[s.screenHeaderIcon,{width:42,height:42,borderRadius:customerRadius.md,backgroundColor:c.primarySoft}]}><Ionicons name={icon} size={20} color={c.primary}/></View> : null}<View style={s.screenHeaderCopy}>{eyebrow ? <Text style={[typeScale.label,{fontSize:10,color:c.muted,marginBottom:3}]}>{eyebrow}</Text> : null}<Text style={[typeScale.headline,{fontSize:25,lineHeight:31,letterSpacing:-.7,color:c.ink}]}>{title}</Text>{subtitle ? <Text style={[typeScale.caption,{fontSize:12,lineHeight:17,color:c.muted,marginTop:3}]}>{subtitle}</Text> : null}</View></View>;
 }
 
 export function BackHeader({ title, subtitle, colors, onBack }: { title:string; subtitle?:string; colors:AppColors; onBack:()=>void }) {
-  const c=semantic(colors);
-  return <View style={[s.backHeader,{borderBottomColor:c.border}]}><Pressable accessibilityRole="button" accessibilityLabel={`Back from ${title}`} onPress={onBack} style={({pressed})=>[s.backButton,{backgroundColor:c.surfaceSubtle},pressed&&s.pressed]}><Ionicons name="chevron-back" size={22} color={c.primary}/></Pressable><View style={s.backCopy}><Text style={[typeScale.title,{color:c.textPrimary}]}>{title}</Text>{subtitle?<Text style={[typeScale.caption,{color:c.textSecondary,marginTop:2}]}>{subtitle}</Text>:null}</View></View>;
+  const c=customerPalette(colors);
+  return <View style={[s.backHeader,{minHeight:70,paddingHorizontal:customerSpace.lg,paddingVertical:customerSpace.sm,gap:customerSpace.md,borderBottomColor:c.border,backgroundColor:c.canvas}]}><Pressable accessibilityRole="button" accessibilityLabel={`Back from ${title}`} onPress={onBack} style={({ pressed }) => [s.backButton,{width:42,height:42,borderRadius:customerRadius.md,backgroundColor:c.surfaceAlt},pressed&&s.pressed]}><Ionicons name="chevron-back" size={21} color={c.primary}/></Pressable><View style={s.backCopy}><Text style={[typeScale.title,{fontSize:18,lineHeight:23,color:c.ink}]}>{title}</Text>{subtitle?<Text style={[typeScale.caption,{fontSize:11,lineHeight:16,color:c.muted,marginTop:2}]}>{subtitle}</Text>:null}</View></View>;
 }
 
 export function EmptyState({ icon='file-tray-outline', title, message, action, colors, onAction }: { icon?: string; title:string; message:string; action?:string; colors:AppColors; onAction?:()=>void }) {

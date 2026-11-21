@@ -5,6 +5,7 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
 import type { AppColors } from '../theme/colors';
+import { customerPalette, customerRadius } from '../theme/customer';
 
 type Coordinate = { latitude: number; longitude: number };
 type Props = { point: Coordinate | null; colors: AppColors; onPick: (point: Coordinate) => void };
@@ -70,6 +71,7 @@ const setWebMapPin = (point: Coordinate) =>
   `window.setDeliveryPin(${point.latitude},${point.longitude});true;`;
 
 export default function AddressMapPicker({ point, colors, onPick }: Props) {
+  const palette = customerPalette(colors);
   const map = useRef<MapView>(null);
   const webMap = useRef<WebView>(null);
   const pointRef = useRef(point);
@@ -108,7 +110,7 @@ export default function AddressMapPicker({ point, colors, onPick }: Props) {
     }
   };
 
-  return <View style={[styles.frame, { borderColor: colors.line }]}>
+  return <View style={[styles.frame, { borderColor: palette.border }]}>
     {expoGo
       ? <WebView
           ref={webMap}
@@ -129,23 +131,23 @@ export default function AddressMapPicker({ point, colors, onPick }: Props) {
           showsCompass
           toolbarEnabled={false}
         >
-          {point && <Marker coordinate={point} title="Delivery location" pinColor={colors.green} />}
+          {point && <Marker coordinate={point} title="Delivery location" pinColor={palette.primary} />}
         </MapView>}
-    {!mapReady && !mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: colors.card }]}>
-      <ActivityIndicator color={colors.green}/>
-      <Text style={[styles.hintText, { color: colors.ink }]}>Loading map…</Text>
+    {!mapReady && !mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
+      <ActivityIndicator color={palette.primary}/>
+      <Text style={[styles.hintText, { color: palette.ink }]}>Loading map…</Text>
     </View>}
-    {mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: colors.card }]}>
-      <Text style={[styles.hintText, { color: colors.ink }]}>Map could not load. Check your internet connection.</Text>
+    {mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
+      <Text style={[styles.hintText, { color: palette.ink }]}>Map could not load. Check your internet connection.</Text>
     </View>}
-    {mapReady && !mapError && !point && <View pointerEvents="none" style={[styles.hint, { backgroundColor: colors.card }]}>
-      <Text style={[styles.hintText, { color: colors.ink }]}>Tap the map to pin your delivery location</Text>
+    {mapReady && !mapError && !point && <View pointerEvents="none" style={[styles.hint, { backgroundColor: palette.surface }]}>
+      <Text style={[styles.hintText, { color: palette.ink }]}>Tap the map to pin your delivery location</Text>
     </View>}
   </View>;
 }
 
 const styles = StyleSheet.create({
-  frame: { height: 310, overflow: 'hidden', borderWidth: 1, borderRadius: 18, marginTop: 10, backgroundColor: '#e8ede8' },
+  frame: { height: 310, overflow: 'hidden', borderWidth: 1, borderRadius: customerRadius.lg, marginTop: 10, backgroundColor: '#e8ede8' },
   map: { width: '100%', height: '100%' },
   hint: { position: 'absolute', top: 12, left: 12, right: 12, alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 11, opacity: .96 },
   mapLoading: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', gap: 8 },

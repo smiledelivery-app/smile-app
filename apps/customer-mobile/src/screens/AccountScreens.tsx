@@ -6,6 +6,8 @@ import { Ionicons } from '../components/AppIcon';
 import type { Session, Vendor } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { api } from '../services/api';
+import { BackHeader } from '../components/ui';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 export type AccountProfile={id:string;name:string;email:string|null;phone:string|null};
 
@@ -109,10 +111,7 @@ export function DeleteAccountScreen({token,colors,onBack,onDeleted}:{token:strin
 }
 
 function Header({title,colors,onBack}:{title:string;colors:AppColors;onBack:()=>void}){
-  return <View style={styles(colors).header}>
-    <Pressable accessibilityRole="button" accessibilityLabel="Back to profile" onPress={onBack} style={styles(colors).back}><Ionicons name="chevron-back" size={23} color={colors.green}/></Pressable>
-    <Text style={styles(colors).title}>{title}</Text>
-  </View>;
+  return <BackHeader title={title} colors={colors} onBack={onBack}/>;
 }
 
 function Field({label,value,onChangeText,colors,keyboardType,secureTextEntry}:{label:string;value:string;onChangeText:(value:string)=>void;colors:AppColors;keyboardType?:'phone-pad';secureTextEntry?:boolean}){
@@ -121,30 +120,33 @@ function Field({label,value,onChangeText,colors,keyboardType,secureTextEntry}:{l
   return <View style={s.field}><Text style={s.label}>{label}</Text><View><TextInput value={value} onChangeText={onChangeText} keyboardType={keyboardType} secureTextEntry={secureTextEntry&&!visible} autoCapitalize={secureTextEntry?'none':'words'} style={[s.input,secureTextEntry&&{paddingRight:48}]}/>{secureTextEntry&&<Pressable accessibilityRole="button" accessibilityLabel={`${visible?'Hide':'Show'} ${label.toLowerCase()}`} onPress={()=>setVisible(current=>!current)} style={{position:'absolute',right:7,top:0,bottom:0,width:38,alignItems:'center',justifyContent:'center'}}><Ionicons name={visible?'eye-off-outline':'eye-outline'} size={19} color={colors.muted}/></Pressable>}</View></View>;
 }
 
-const styles=(c:AppColors)=>StyleSheet.create({
-  screen:{flex:1,backgroundColor:c.paper},
-  page:{padding:21,paddingTop:20,paddingBottom:40},
-  header:{minHeight:42,flexDirection:'row',alignItems:'center',gap:6,marginBottom:13},
-  back:{width:34,height:34,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
-  title:{fontSize:29,fontWeight:'900',letterSpacing:-.6,color:c.ink},
-  body:{fontSize:13,lineHeight:21,color:c.muted,marginTop:5},
-  field:{marginTop:17},
-  label:{fontSize:12,fontWeight:'800',color:c.ink,marginBottom:7},
-  input:{height:48,borderWidth:1,borderColor:c.line,borderRadius:13,paddingHorizontal:13,color:c.ink,backgroundColor:c.card,fontSize:15},
-  readonly:{minHeight:45,justifyContent:'center',paddingHorizontal:13,borderWidth:1,borderColor:c.line,borderRadius:13,backgroundColor:c.cream},
-  readonlyText:{fontSize:13,color:c.muted},
-  hint:{fontSize:11,color:c.muted,marginTop:5},
-  primary:{height:49,alignItems:'center',justifyContent:'center',backgroundColor:c.green,borderRadius:14,marginTop:22},
-  primaryText:{fontSize:13,fontWeight:'900',color:'white'},
-  danger:{height:49,alignItems:'center',justifyContent:'center',backgroundColor:'#a34232',borderRadius:14,marginTop:22},
-  error:{fontSize:12,color:'#a34232',marginTop:12},
-  favorite:{minHeight:85,flexDirection:'row',alignItems:'center',padding:9,marginTop:11,borderRadius:15,backgroundColor:c.card},
-  favoriteMain:{flex:1,flexDirection:'row',alignItems:'center',gap:11},
-  favoriteImage:{width:60,height:60,borderRadius:12,backgroundColor:c.cream},
-  heart:{width:40,height:44,alignItems:'center',justifyContent:'center'},
-  empty:{alignItems:'center',gap:9,padding:28,marginTop:22,borderRadius:16,backgroundColor:c.cream},
-  rowTitle:{fontSize:15,fontWeight:'800',color:c.ink},
-  infoCard:{padding:15,marginTop:12,borderRadius:15,backgroundColor:c.card},
-  warning:{flexDirection:'row',gap:10,padding:14,marginTop:15,borderRadius:13,backgroundColor:'#fbefeb'},
-  warningText:{flex:1,fontSize:12,lineHeight:19,color:'#874032'},
-});
+const styles=(colors:AppColors)=>{
+  const c=customerPalette(colors);
+  return StyleSheet.create({
+    screen:{flex:1,backgroundColor:c.canvas},
+    page:{paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.md,paddingBottom:customerSpace.xxl},
+    header:{minHeight:42,flexDirection:'row',alignItems:'center',gap:6,marginBottom:13},
+    back:{width:42,height:42,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.surfaceAlt},
+    title:{fontSize:27,lineHeight:33,fontWeight:'900',letterSpacing:-.7,color:c.ink},
+    body:{fontSize:12,lineHeight:19,color:c.muted,marginTop:5},
+    field:{marginTop:15},
+    label:{fontSize:11,fontWeight:'800',color:c.ink,marginBottom:7},
+    input:{minHeight:50,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.sm,paddingHorizontal:13,color:c.ink,backgroundColor:c.surface,fontSize:14},
+    readonly:{minHeight:48,justifyContent:'center',paddingHorizontal:13,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},
+    readonlyText:{fontSize:12,color:c.muted},
+    hint:{fontSize:10,lineHeight:15,color:c.muted,marginTop:5},
+    primary:{minHeight:48,alignItems:'center',justifyContent:'center',backgroundColor:c.primary,borderRadius:customerRadius.sm,marginTop:customerSpace.xl},
+    primaryText:{fontSize:12,fontWeight:'900',color:'white'},
+    danger:{minHeight:48,alignItems:'center',justifyContent:'center',backgroundColor:c.danger,borderRadius:customerRadius.sm,marginTop:customerSpace.xl},
+    error:{fontSize:11,lineHeight:17,color:c.danger,marginTop:11},
+    favorite:{minHeight:84,flexDirection:'row',alignItems:'center',padding:9,marginTop:9,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface},
+    favoriteMain:{flex:1,flexDirection:'row',alignItems:'center',gap:11},
+    favoriteImage:{width:62,height:62,borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},
+    heart:{width:44,height:44,alignItems:'center',justifyContent:'center'},
+    empty:{alignItems:'center',gap:8,padding:24,marginTop:customerSpace.xl,borderRadius:customerRadius.lg,backgroundColor:c.surfaceAlt},
+    rowTitle:{fontSize:14,fontWeight:'800',color:c.ink},
+    infoCard:{padding:14,marginTop:9,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface},
+    warning:{flexDirection:'row',gap:10,padding:14,marginTop:14,borderRadius:customerRadius.md,backgroundColor:c.accentSoft},
+    warningText:{flex:1,fontSize:11,lineHeight:17,color:c.danger},
+  });
+};

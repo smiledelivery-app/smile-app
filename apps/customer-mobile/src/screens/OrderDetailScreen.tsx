@@ -6,6 +6,7 @@ import type { CustomerOrder, OrderTracking } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { api } from '../services/api';
 import OrderTrackingMap from './OrderTrackingMap';
+import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 type Props={order:CustomerOrder;colors:AppColors;token:string|null;demoMode:boolean;onBack:()=>void};
 const timeline=[['CONFIRMED','Order received'],['ACCEPTED_BY_VENDOR','Kitchen confirmed'],['PREPARING','Being prepared'],['READY_FOR_PICKUP','Ready · finding a rider'],['RIDER_ASSIGNED','Rider assigned'],['PICKED_UP','On the way'],['DELIVERED','Delivered']] as const;
 const step=(status:string)=>({PENDING_PAYMENT:0,CONFIRMED:0,ACCEPTED_BY_VENDOR:1,PREPARING:2,READY_FOR_PICKUP:3,RIDER_ASSIGNED:4,PICKED_UP:5,DELIVERED:6} as Record<string,number>)[status]??-1;
@@ -48,5 +49,46 @@ export default function OrderDetailScreen({order,colors:c,token,demoMode,onBack}
     <View style={s.card}><Text style={s.section}>STATUS HISTORY</Text>{order.events.map(event=><View key={event.id}><Text style={s.eventTitle}>{event.status.replaceAll('_',' ').toLowerCase()}</Text><Text style={s.body}>{new Date(event.createdAt).toLocaleString()}</Text>{event.note&&<Text style={s.body}>{event.note}</Text>}</View>)}</View>
   </ScrollView></View>;
 }
-const styles=(c:AppColors)=>StyleSheet.create({screen:{flex:1,backgroundColor:c.paper},page:{padding:20,paddingBottom:35},back:{minHeight:36,flexDirection:'row',alignItems:'center',alignSelf:'flex-start',gap:2,marginBottom:15},backText:{fontSize:13,fontWeight:'800',color:c.green},kicker:{fontSize:11,fontWeight:'900',letterSpacing:1.2,color:c.green},title:{fontSize:31,fontWeight:'900',color:c.ink,marginTop:6},body:{fontSize:11,lineHeight:18,color:c.muted,marginTop:4},card:{padding:15,borderWidth:1,borderColor:c.line,borderRadius:16,backgroundColor:c.card,marginTop:14},section:{fontSize:10,fontWeight:'900',letterSpacing:1,color:c.muted,marginBottom:10},stage:{flexDirection:'row',gap:10,minHeight:35},track:{width:13,alignItems:'center'},dot:{width:10,height:10,borderRadius:5,borderWidth:1.5,borderColor:c.line,backgroundColor:c.card,zIndex:2},done:{backgroundColor:c.green,borderColor:c.green},current:{width:12,height:12,borderRadius:6,backgroundColor:c.accent,borderColor:c.accent},line:{position:'absolute',top:10,width:2,height:28,backgroundColor:c.line},lineDone:{backgroundColor:c.green},stageCopy:{flex:1,paddingBottom:7},stageTitle:{fontSize:12,fontWeight:'800',color:c.ink},future:{color:c.muted,fontWeight:'600'},contactCard:{flexDirection:"row",alignItems:"center",gap:12,padding:14,marginTop:12,borderRadius:16,borderWidth:1,borderColor:c.line,backgroundColor:c.card},riderAvatar:{width:46,height:46,borderRadius:23,alignItems:"center",justifyContent:"center",backgroundColor:c.mint},avatarText:{fontSize:19,fontWeight:"900",color:c.green},riderLabel:{fontSize:9,fontWeight:"900",letterSpacing:1,color:c.green},riderName:{fontSize:15,fontWeight:"900",color:c.ink,marginTop:3},contactActions:{flexDirection:"row",gap:9,marginTop:9},contactButton:{flex:1,minHeight:43,alignItems:"center",justifyContent:"center",borderRadius:13,backgroundColor:c.green},contactButtonText:{fontSize:12,fontWeight:"900",color:"white"},whatsappButton:{backgroundColor:c.mint},whatsappText:{fontSize:12,fontWeight:"900",color:c.green},code:{padding:14,borderRadius:14,backgroundColor:c.cream,marginTop:12},codeLabel:{fontSize:10,fontWeight:'900',letterSpacing:1,color:c.green},codeValue:{fontSize:30,fontWeight:'900',letterSpacing:6,color:c.ink,marginTop:6},item:{flexDirection:'row',justifyContent:'space-between',paddingVertical:8,borderBottomWidth:1,borderColor:c.line},itemName:{fontSize:12,color:c.ink},itemPrice:{fontSize:12,fontWeight:'800',color:c.ink},total:{flexDirection:'row',justifyContent:'space-between',paddingTop:12},totalPrice:{fontSize:15,fontWeight:'900',color:c.green},event:{paddingVertical:8,borderBottomWidth:1,borderColor:c.line},eventTitle:{fontSize:12,fontWeight:'800',color:c.ink}});
+const styles=(colors:AppColors)=>{
+  const c=customerPalette(colors);
+  return StyleSheet.create({
+    screen:{flex:1,backgroundColor:c.canvas},
+    page:{padding:customerSpace.lg,paddingBottom:customerSpace.xxl},
+    kicker:{fontSize:10,fontWeight:'900',letterSpacing:1.1,color:c.primary},
+    title:{fontSize:27,lineHeight:33,fontWeight:'900',letterSpacing:-.7,color:c.ink,marginTop:6},
+    body:{fontSize:11,lineHeight:17,color:c.muted,marginTop:4},
+    card:{padding:14,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface,marginTop:12},
+    section:{fontSize:9,fontWeight:'900',letterSpacing:1,color:c.muted,marginBottom:10},
+    stage:{flexDirection:'row',gap:10,minHeight:35},
+    track:{width:13,alignItems:'center'},
+    dot:{width:10,height:10,borderRadius:5,borderWidth:1.5,borderColor:c.border,backgroundColor:c.surface,zIndex:2},
+    done:{backgroundColor:c.primary,borderColor:c.primary},
+    current:{width:12,height:12,borderRadius:6,backgroundColor:c.accent,borderColor:c.accent},
+    line:{position:'absolute',top:10,width:2,height:28,backgroundColor:c.border},
+    lineDone:{backgroundColor:c.primary},
+    stageCopy:{flex:1,paddingBottom:7},
+    stageTitle:{fontSize:12,fontWeight:'800',color:c.ink},
+    future:{color:c.muted,fontWeight:'600'},
+    contactCard:{flexDirection:'row',alignItems:'center',gap:12,padding:14,marginTop:12,borderRadius:customerRadius.md,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},
+    riderAvatar:{width:46,height:46,borderRadius:23,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},
+    avatarText:{fontSize:19,fontWeight:'900',color:c.primary},
+    riderLabel:{fontSize:9,fontWeight:'900',letterSpacing:1,color:c.primary},
+    riderName:{fontSize:14,fontWeight:'900',color:c.ink,marginTop:3},
+    contactActions:{flexDirection:'row',gap:9,marginTop:9},
+    contactButton:{flex:1,minHeight:44,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:c.primary},
+    contactButtonText:{fontSize:11,fontWeight:'900',color:'white'},
+    whatsappButton:{backgroundColor:c.primarySoft},
+    whatsappText:{fontSize:11,fontWeight:'900',color:c.primary},
+    code:{padding:14,borderRadius:customerRadius.md,backgroundColor:c.accentSoft,marginTop:12},
+    codeLabel:{fontSize:9,fontWeight:'900',letterSpacing:1,color:c.primary},
+    codeValue:{fontSize:29,fontWeight:'900',letterSpacing:6,color:c.ink,marginTop:6},
+    item:{flexDirection:'row',justifyContent:'space-between',paddingVertical:8,borderBottomWidth:1,borderColor:c.border},
+    itemName:{fontSize:11,color:c.ink},
+    itemPrice:{fontSize:11,fontWeight:'800',color:c.ink},
+    total:{flexDirection:'row',justifyContent:'space-between',paddingTop:12},
+    totalPrice:{fontSize:15,fontWeight:'900',color:c.primary},
+    event:{paddingVertical:8,borderBottomWidth:1,borderColor:c.border},
+    eventTitle:{fontSize:11,fontWeight:'800',color:c.ink},
+  });
+};
 const whatsAppNumber=(phone:string)=>{let digits=phone.replace(/\D/g,'');if(digits.startsWith('0'))digits=`234${digits.slice(1)}`;return digits.length>=10?digits:'';};

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { calculateOrderAmounts, canVendorTransition } from '../src/order-rules.ts';
-import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from '../src/catalog-rules.ts';
+import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from '../src/catalog-rules.ts';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from '../src/dispatch-rules.ts';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from '../src/google-maps.ts';
 import { createProofCode } from '../src/proof-codes.ts';
@@ -42,6 +42,14 @@ test('only the Smile test account accesses demo features outside production, ind
   assert.equal(shouldUseMockCheckout(true,true),true);
   assert.equal(shouldUseMockCheckout(true,false),false);
   assert.equal(shouldUseMockCheckout(false,true),false);
+});
+
+test('approved stores open by default and non-approved stores remain closed',()=>{
+  assert.equal(vendorIsOpenAfterReview('APPROVED'),true);
+  assert.equal(vendorIsOpenAfterReview('APPROVED',false),false);
+  assert.equal(vendorIsOpenAfterReview('APPROVED',true),true);
+  assert.equal(vendorIsOpenAfterReview('REJECTED',true),false);
+  assert.equal(vendorIsOpenAfterReview('SUSPENDED',true),false);
 });
 
 test('rider dispatch uses pickup proximity, service area, prior offers, and nearest-first limits',()=>{

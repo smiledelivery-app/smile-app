@@ -7,7 +7,7 @@ import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOff
 import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
-import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout } from './catalog-rules.js';
+import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
 import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
 import { createProofCode } from './proof-codes.js';
@@ -841,9 +841,10 @@ app.get('/api/v1/vendors',optionalUser,async (req:AuthRequest,res,next) => {
   if(!input.success) return res.status(400).json({error:{code:'INVALID_QUERY',message:'Search query is invalid.'}});
   try {
     const buildWhere=(isDemo:boolean):Prisma.VendorWhereInput=>{
-      const where:Prisma.VendorWhereInput={status:VendorStatus.APPROVED,isOpen:true,isDemo};
+      const availableProducts:Prisma.ProductWhereInput={available:true,isDemo};
+      const where:Prisma.VendorWhereInput={status:VendorStatus.APPROVED,isOpen:true,isDemo,products:{some:availableProducts}};
       if(input.data.q)where.OR=[{name:{contains:input.data.q,mode:'insensitive'}},{address:{contains:input.data.q,mode:'insensitive'}},{products:{some:{available:true,isDemo,name:{contains:input.data.q,mode:'insensitive'}}}},{products:{some:{available:true,isDemo,description:{contains:input.data.q,mode:'insensitive'}}}},{products:{some:{available:true,isDemo,category:{contains:input.data.q,mode:'insensitive'}}}}];
-      if(input.data.category)where.products={some:{available:true,category:{contains:input.data.category,mode:'insensitive'}}};
+      if(input.data.category)where.products={some:{...availableProducts,category:{contains:input.data.category,mode:'insensitive'}}};
       return where;
     };
     const select={id:true,name:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{category:true,imageUrl:true},take:1}} as const;
@@ -1374,8 +1375,8 @@ app.patch('/api/v1/admin/vendors/:vendorId/status',requireUser,requireAdminPermi
   try{
     const data=await prisma.$transaction(async tx=>{
       const previous=await tx.vendor.findUniqueOrThrow({where:{id:vendorId},select:{status:true,isOpen:true,isDemo:true}});
-      const vendor=await tx.vendor.update({where:{id:vendorId},data:{status:input.data.status,isOpen:input.data.status===VendorStatus.APPROVED?input.data.isOpen??false:false},select:{id:true,name:true,status:true,isOpen:true}});
-      await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'VENDOR_STATUS_CHANGED',targetType:'Vendor',targetId:vendor.id,metadata:{previous:{status:previous.status,isOpen:previous.isOpen},next:{status:vendor.status,isOpen:vendor.isOpen},reason:input.data.reason},isDemo:previous.isDemo}});
+      const vendor=await tx.vendor.update({where:{id:vendorId},data:{status:input.data.status,isOpen:vendorIsOpenAfterReview(input.data.status,input.data.isOpen)},select:{id:true,name:true,status:true,isOpen:true}});
+      await tx.auditLog.create({data:{actorId:req.auth!.userId,action:previous.status===vendor.status?'VENDOR_VISIBILITY_CHANGED':'VENDOR_STATUS_CHANGED',targetType:'Vendor',targetId:vendor.id,metadata:{previous:{status:previous.status,isOpen:previous.isOpen},next:{status:vendor.status,isOpen:vendor.isOpen},reason:input.data.reason},isDemo:previous.isDemo}});
       return vendor;
     });
     return res.json({data});
