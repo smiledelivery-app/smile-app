@@ -11,6 +11,7 @@ const tabCopy: Record<Tab, { title: string; description: string }> = {
   overview: { title: 'Store overview', description: 'Sign in to manage your store and view current order activity.' },
   orders: { title: 'Store orders', description: 'Sign in to review and update your store orders.' },
   products: { title: 'Products & extras', description: 'Sign in to manage your menu, prices, and availability.' },
+  wallet: { title: 'Wallet', description: 'Sign in to view balances, payouts, and wallet activity.' },
   home: { title: 'Rider workspace', description: 'Sign in to manage rider availability and your service area.' },
   offers: { title: 'Delivery offers', description: 'Sign in as an approved rider to receive eligible delivery offers.' },
   deliveries: { title: 'Deliveries', description: 'Sign in to view assigned deliveries and confirm handoffs.' },

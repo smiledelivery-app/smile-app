@@ -16,6 +16,7 @@ import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTr
 import { checkPhoneVerification, PhoneVerificationError, PHONE_VERIFICATION_EXPIRY_MINUTES, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
 import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
+import { vendorOperatingHoursInput } from './vendor-hours.js';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -26,10 +27,10 @@ const vendorNotificationStatuses: OrderStatus[] = [OrderStatus.CONFIRMED,OrderSt
 async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipientUserId?:string) {
   const order=await prisma.order.findUnique({
     where:{id:orderId},
-    select:{id:true,isDemo:true,customerId:true,vendor:{select:{id:true,name:true,ownerId:true}},delivery:{select:{assignedRider:{select:{userId:true}}}}},
+    select:{id:true,displayNumber:true,isDemo:true,customerId:true,vendor:{select:{id:true,name:true,ownerId:true}},delivery:{select:{assignedRider:{select:{userId:true}}}}},
   });
   if(!order||order.isDemo)return;
-  const message=notificationCopy(status,order.id,order.vendor.name);
+  const message=notificationCopy(status,order.id,order.vendor.name,order.displayNumber);
   const recipients=new Set<string>([order.customerId]);
   if(vendorNotificationStatuses.includes(status))recipients.add(order.vendor.ownerId);
   if(status===OrderStatus.RIDER_ASSIGNED&&order.delivery?.assignedRider)recipients.add(order.delivery.assignedRider.userId);
@@ -38,11 +39,11 @@ async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipien
     const isVendor=userId===order.vendor.ownerId;
     const isRider=userId===order.delivery?.assignedRider?.userId||userId===extraRecipientUserId&&status===OrderStatus.CANCELLED;
     const copy=status===OrderStatus.CONFIRMED&&isVendor
-      ?{title:'New customer order',body:`${order.vendor.name} received order #${order.id.slice(-8).toUpperCase()}.`}
+      ?{title:'New customer order',body:`${order.vendor.name} received order #${String(order.displayNumber).padStart(9,'0')}.`}
       :status===OrderStatus.CANCELLED&&isVendor
-        ?{title:'Order cancelled',body:`Order #${order.id.slice(-8).toUpperCase()} was cancelled.`}
+      ?{title:'Order cancelled',body:`Order #${String(order.displayNumber).padStart(9,'0')} was cancelled.`}
         :status===OrderStatus.RIDER_ASSIGNED&&(isVendor||isRider)
-          ?{title:isRider?'New delivery assigned':'Rider coming to pick up',body:`A rider is on the way to ${order.vendor.name} for order #${order.id.slice(-8).toUpperCase()}.`}
+        ?{title:isRider?'New delivery assigned':'Rider coming to pick up',body:`A rider is on the way to ${order.vendor.name} for order #${String(order.displayNumber).padStart(9,'0')}.`}
           :message;
     return {
       userId,title:copy.title,body:copy.body,type:`ORDER_${status}`,orderId:order.id,
@@ -185,7 +186,7 @@ async function dispatchDeliveryOffers(deliveryId:string) {
     return created.count;
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
   if(createdCount){
-    const shortId=delivery.order.id.slice(-8).toUpperCase();
+    const shortId=String(delivery.order.displayNumber).padStart(9,'0');
     const messages:NotificationInput[]=nearby.map(({rider})=>({
       userId:rider.userId,title:'New delivery available',
       body:`Pickup at ${vendor.name} · Order #${shortId}. Open the app to review this offer.`,
@@ -569,8 +570,7 @@ app.post('/api/v1/rider/media/sign-nin',requireUser,(req:AuthRequest,res)=>{
 });
 app.get('/api/v1/rider/payout-banks',requireUser,async(_req,res,next)=>{try{return res.json({data:await listPaystackBanks(paystackSecret())});}catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'BANK_LIST_UNAVAILABLE',message:'Commercial bank list is unavailable. Try again later.'}});return next(error);}});
 
-const storeTime=z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/,'Use 24-hour time, for example 09:00.');
-const onboardingInput = z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100).optional(),contactPhone:z.string().trim().min(7).max(24).optional(),description:z.string().trim().max(1000).default(''),address:z.string().trim().min(5).max(250),openingTime:storeTime,closingTime:storeTime,logoUrl:z.string().url().max(2048).nullable().optional(),coverImageUrl:z.string().url().max(2048).nullable().optional(),cacNumber:z.string().trim().max(50).nullable().optional(),cacDocumentUrl:z.string().url().max(2048).nullable().optional(),termsAccepted:z.literal(true)}).and(coordinatePair);
+const onboardingInput = z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100).optional(),contactPhone:z.string().trim().min(7).max(24).optional(),description:z.string().trim().max(1000).default(''),address:z.string().trim().min(5).max(250),operatingHours:vendorOperatingHoursInput,logoUrl:z.string().url().max(2048).nullable().optional(),coverImageUrl:z.string().url().max(2048).nullable().optional(),cacNumber:z.string().trim().max(50).nullable().optional(),cacDocumentUrl:z.string().url().max(2048).nullable().optional(),termsAccepted:z.literal(true)}).and(coordinatePair);
 app.post('/api/v1/vendors/onboarding',requireUser,async (req:AuthRequest,res,next) => {
   const input=onboardingInput.safeParse(req.body);
   if(!input.success) return res.status(400).json({error:{code:'INVALID_APPLICATION',message:'Complete the business details and accept the platform terms.'}});
@@ -585,7 +585,7 @@ app.post('/api/v1/vendors/onboarding',requireUser,async (req:AuthRequest,res,nex
     const vendor=await prisma.$transaction(async tx=>{
       const user=await tx.user.findUniqueOrThrow({where:{id:req.auth!.userId}});
       await tx.user.update({where:{id:user.id},data:{name:input.data.ownerName??user.name,...(input.data.contactPhone?{phone:input.data.contactPhone}:{}),roles:user.roles.includes(Role.VENDOR)?user.roles:[...user.roles,Role.VENDOR]}});
-      return tx.vendor.create({data:{ownerId:user.id,name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,openingTime:input.data.openingTime,closingTime:input.data.closingTime,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,slug,status:VendorStatus.PENDING_REVIEW,isOpen:false,isDemo:user.isDemo,termsAcceptedAt:new Date()}});
+      return tx.vendor.create({data:{ownerId:user.id,name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,slug,status:VendorStatus.PENDING_REVIEW,isOpen:false,isDemo:user.isDemo,termsAcceptedAt:new Date(),operatingHours:{create:input.data.operatingHours}}});
     });
     void provisionDva(req.auth!.userId);
     return res.status(201).json({data:{id:vendor.id,name:vendor.name,status:vendor.status}});
@@ -596,17 +596,22 @@ app.post('/api/v1/vendors/onboarding',requireUser,async (req:AuthRequest,res,nex
 });
 
 app.get('/api/v1/vendor/profile',requireUser,requireRole(Role.VENDOR),async (req:AuthRequest,res,next)=>{
-  try { const data=await prisma.vendor.findUnique({where:{ownerId:req.auth!.userId},include:{owner:{select:{name:true}}}}); if(!data)return res.status(404).json({error:{code:'VENDOR_PROFILE_NOT_FOUND',message:'No vendor application is linked to this account.'}});return res.json({data:{...data,ownerName:data.owner.name,owner:undefined}}); }
+  try { const data=await prisma.vendor.findUnique({where:{ownerId:req.auth!.userId},include:{owner:{select:{name:true}},operatingHours:{orderBy:{dayOfWeek:'asc'}}}}); if(!data)return res.status(404).json({error:{code:'VENDOR_PROFILE_NOT_FOUND',message:'No vendor application is linked to this account.'}});return res.json({data:{...data,ownerName:data.owner.name,owner:undefined}}); }
   catch(error){return next(error);}
 });
-const vendorProfileInput=z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100),contactPhone:z.string().trim().min(7).max(24),description:z.string().trim().max(1000),address:z.string().trim().min(5).max(250),openingTime:storeTime,closingTime:storeTime,logoUrl:z.string().url().max(2048).nullable(),coverImageUrl:z.string().url().max(2048).nullable(),cacNumber:z.string().trim().max(50).nullable(),cacDocumentUrl:z.string().url().max(2048).nullable()}).and(coordinatePair);
+const vendorProfileInput=z.object({name:z.string().trim().min(2).max(120),ownerName:z.string().trim().min(2).max(100),contactPhone:z.string().trim().min(7).max(24),description:z.string().trim().max(1000),address:z.string().trim().min(5).max(250),operatingHours:vendorOperatingHoursInput,logoUrl:z.string().url().max(2048).nullable(),coverImageUrl:z.string().url().max(2048).nullable(),cacNumber:z.string().trim().max(50).nullable(),cacDocumentUrl:z.string().url().max(2048).nullable()}).and(coordinatePair);
 app.put('/api/v1/vendor/profile',requireUser,requireRole(Role.VENDOR),async(req:AuthRequest,res,next)=>{
   const input=vendorProfileInput.safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_VENDOR_PROFILE',message:'Check the owner, store, address, and document details.'}});
   try{
     const vendor=await prisma.vendor.findUnique({where:{ownerId:req.auth!.userId},select:{id:true,status:true}});if(!vendor)return res.status(404).json({error:{code:'VENDOR_PROFILE_NOT_FOUND',message:'Submit your store application first.'}});
     let point=input.data.latitude!==undefined?{latitude:input.data.latitude,longitude:input.data.longitude!}:null;let geocodedAt:Date|null=null;
     if(!point&&mappingConfigured('geocoding')){try{point=await geocode(`${input.data.address}, Nigeria`);geocodedAt=new Date();}catch(error){console.warn(JSON.stringify({event:'vendor_geocoding_failed',error:error instanceof Error?error.message:'unknown'}));}}
-    const [updated]=await prisma.$transaction([prisma.vendor.update({where:{id:vendor.id},data:{name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,openingTime:input.data.openingTime,closingTime:input.data.closingTime,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,status:vendor.status===VendorStatus.DRAFT?VendorStatus.PENDING_REVIEW:vendor.status,termsAcceptedAt:new Date()}}),prisma.user.update({where:{id:req.auth!.userId},data:{name:input.data.ownerName,phone:input.data.contactPhone}})]);
+    const updated=await prisma.$transaction(async tx=>{
+      await tx.vendor.update({where:{id:vendor.id},data:{name:input.data.name,description:input.data.description,address:input.data.address,contactPhone:input.data.contactPhone,logoUrl:input.data.logoUrl,coverImageUrl:input.data.coverImageUrl,cacNumber:input.data.cacNumber,cacDocumentUrl:input.data.cacDocumentUrl,latitude:point?.latitude,longitude:point?.longitude,geocodedAt,status:vendor.status===VendorStatus.DRAFT?VendorStatus.PENDING_REVIEW:vendor.status,termsAcceptedAt:new Date()}});
+      await Promise.all(input.data.operatingHours.map(hour=>tx.vendorOperatingHour.upsert({where:{vendorId_dayOfWeek:{vendorId:vendor.id,dayOfWeek:hour.dayOfWeek}},create:{vendorId:vendor.id,...hour},update:{isClosed:hour.isClosed,openingTime:hour.openingTime,closingTime:hour.closingTime}})));
+      await tx.user.update({where:{id:req.auth!.userId},data:{name:input.data.ownerName,phone:input.data.contactPhone}});
+      return tx.vendor.findUniqueOrThrow({where:{id:vendor.id},include:{operatingHours:{orderBy:{dayOfWeek:'asc'}}}});
+    });
     return res.json({data:{...updated,ownerName:input.data.ownerName}});
   }catch(error){return next(error);}
 });
@@ -758,7 +763,10 @@ app.get('/api/v1/notifications',requireUser,async(req:AuthRequest,res,next)=>{
       prisma.notification.findMany({where:{userId:req.auth!.userId},orderBy:{createdAt:'desc'},take:50,select:{id:true,title:true,body:true,type:true,orderId:true,readAt:true,createdAt:true}}),
       prisma.notification.count({where:{userId:req.auth!.userId,readAt:null}}),
     ]);
-    return res.json({data:{items,unreadCount}});
+    const orderIds=[...new Set(items.flatMap(item=>item.orderId?[item.orderId]:[]))];
+    const orders=orderIds.length?await prisma.order.findMany({where:{id:{in:orderIds}},select:{id:true,displayNumber:true}}):[];
+    const displayById=new Map(orders.map(order=>[order.id,order.displayNumber]));
+    return res.json({data:{items:items.map(item=>({...item,displayNumber:item.orderId?displayById.get(item.orderId)??null:null})),unreadCount}});
   }catch(error){return next(error);}
 });
 app.patch('/api/v1/notifications/:notificationId/read',requireUser,async(req:AuthRequest,res,next)=>{
@@ -948,6 +956,39 @@ app.post('/api/v1/orders/:orderId/pay',requireUser,requireRole(Role.CUSTOMER),as
   } catch(error) {
     if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});
     if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return res.status(409).json({error:{code:'PAYMENT_ALREADY_INITIALIZED',message:'A payment has already been initialized. Refresh this order before trying again.'}});
+    return next(error);
+  }
+});
+
+app.post('/api/v1/orders/:orderId/pay/verify',requireUser,requireRole(Role.CUSTOMER),async(req:AuthRequest,res,next)=>{
+  const input=z.object({reference:z.string().min(1).max(160)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PAYMENT_REFERENCE',message:'A valid Paystack payment reference is required.'}});
+  try{
+    const order=await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),customerId:req.auth!.userId},select:{id:true,status:true,totalMinor:true}});
+    if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Order not found.'}});
+    if(order.status===OrderStatus.CONFIRMED)return res.json({data:{orderId:order.id,status:order.status,confirmed:true}});
+    if(order.status!==OrderStatus.PENDING_PAYMENT)return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
+    const payment=await prisma.payment.findUnique({where:{providerReference:input.data.reference},select:{id:true,orderId:true,amountMinor:true,provider:true}});
+    if(!payment||payment.provider!=='paystack'||payment.orderId!==order.id||payment.amountMinor!==order.totalMinor)return res.status(404).json({error:{code:'PAYMENT_NOT_FOUND',message:'This Paystack payment does not belong to the order.'}});
+    const verified=await verifyPaystackTransaction(input.data.reference,paystackSecret());
+    if(verified.status!=='success')return res.status(202).json({data:{orderId:order.id,status:verified.status,confirmed:false}});
+    if(verified.reference!==input.data.reference||verified.amountMinor!==order.totalMinor||verified.metadata.purpose!=='order_payment'||verified.metadata.orderId!==order.id||verified.metadata.userId!==req.auth!.userId)return res.status(409).json({error:{code:'PAYMENT_MISMATCH',message:'Paystack could not verify this payment for the order.'}});
+    const confirmed=await prisma.$transaction(async tx=>{
+      const changed=await tx.order.updateMany({where:{id:order.id,customerId:req.auth!.userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
+      if(changed.count)await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.CONFIRMED,actorId:req.auth!.userId,note:'Paystack payment verified'}});
+      else{
+        const current=await tx.order.findUnique({where:{id:order.id},select:{status:true}});
+        if(current?.status!==OrderStatus.CONFIRMED)throw new Error('ORDER_STATE_CHANGED');
+      }
+      await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
+      return changed.count>0;
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    if(confirmed)emitOrderStatusNotification(order.id,OrderStatus.CONFIRMED);
+    return res.json({data:{orderId:order.id,status:OrderStatus.CONFIRMED,confirmed:true}});
+  }catch(error){
+    if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});
+    if(error instanceof Error&&error.message==='ORDER_STATE_CHANGED')return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
+    if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2034')return res.status(409).json({error:{code:'PAYMENT_CONFLICT',message:'The order changed while confirming payment. Try again.'}});
     return next(error);
   }
 });
@@ -1174,7 +1215,7 @@ app.get('/api/v1/orders/:orderId/tracking',requireUser,requireRole(Role.CUSTOMER
 });
 app.get('/api/v1/wallet/transactions',requireUser,requireRole(Role.CUSTOMER),async(req:AuthRequest,res,next)=>{
   try{
-    const data=await prisma.payment.findMany({where:{order:{customerId:req.auth!.userId}},orderBy:{createdAt:'desc'},take:100,select:{id:true,amountMinor:true,status:true,provider:true,isDemo:true,createdAt:true,order:{select:{id:true,vendor:{select:{name:true}}}}}});
+    const data=await prisma.payment.findMany({where:{order:{customerId:req.auth!.userId}},orderBy:{createdAt:'desc'},take:100,select:{id:true,amountMinor:true,status:true,provider:true,isDemo:true,createdAt:true,order:{select:{id:true,displayNumber:true,vendor:{select:{name:true}}}}}});
     return res.json({data});
   }catch(error){return next(error);}
 });
@@ -1183,7 +1224,7 @@ app.get('/api/v1/vendor/orders',requireUser,requireRole(Role.VENDOR),async (req:
   try {
     const vendor = await prisma.vendor.findFirst({where:{ownerId:req.auth!.userId},select:{id:true}});
     if(!vendor) return res.status(403).json({error:{code:'VENDOR_NOT_APPROVED',message:'An approved vendor account is required.'}});
-    const rows = await prisma.order.findMany({where:{vendorId:vendor.id},orderBy:{createdAt:'asc'},take:100,include:{items:{include:{addons:true}},events:{orderBy:{createdAt:'asc'}},delivery:{include:{assignedRider:{include:{user:{select:{name:true}}}}}}}});
+    const rows = await prisma.order.findMany({where:{vendorId:vendor.id,status:{not:OrderStatus.PENDING_PAYMENT},payments:{some:{status:'SUCCEEDED'}}},orderBy:{createdAt:'asc'},take:100,include:{items:{include:{addons:true}},events:{orderBy:{createdAt:'asc'}},delivery:{include:{assignedRider:{include:{user:{select:{name:true}}}}}}}});
     const data=rows.map(({delivery,...order})=>({...order,delivery:delivery?{status:delivery.status,assignedAt:delivery.assignedAt,riderName:delivery.assignedRider?.user.name??null,pickupVerified:delivery.pickupVerifiedAt!==null}:null}));
     return res.json({data});
   } catch(error) { return next(error); }
@@ -1211,7 +1252,7 @@ app.post('/api/v1/vendor/orders/:orderId/status',requireUser,requireRole(Role.VE
   try {
     const vendor = await prisma.vendor.findFirst({where:{ownerId:req.auth!.userId,status:VendorStatus.APPROVED}});
     if(!vendor) return res.status(403).json({error:{code:'VENDOR_NOT_APPROVED',message:'An approved vendor account is required.'}});
-    const order = await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),vendorId:vendor.id}});
+    const order = await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),vendorId:vendor.id,status:{not:OrderStatus.PENDING_PAYMENT},payments:{some:{status:'SUCCEEDED'}}}});
     if(!order) return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Order not found.'}});
     if(!canVendorTransition(order.status,input.data.status)) return res.status(409).json({error:{code:'INVALID_TRANSITION',message:'The order has changed or this transition is not allowed.'}});
     const result = await prisma.$transaction(async tx=>{
@@ -1253,7 +1294,7 @@ app.get('/api/v1/admin/overview',requireUser,requireAdminPermission('dashboard.r
       prisma.order.aggregate({where:{isDemo:false,status:OrderStatus.DELIVERED,...dateRange},_sum:{deliveryFeeMinor:true}}),
       prisma.payment.aggregate({where:{isDemo:false,status:'SUCCEEDED',...(input.data.from||input.data.to?{createdAt:{...(input.data.from?{gte:input.data.from}:{}),...(input.data.to?{lt:input.data.to}:{})}}:{})},_sum:{amountMinor:true}}),
       prisma.delivery.findMany({where:{status:DeliveryStatus.DELIVERED,deliveredAt:input.data.from||input.data.to?{...(input.data.from?{gte:input.data.from}:{}),...(input.data.to?{lt:input.data.to}:{})}:{not:null},order:{isDemo:false,...dateRange}},select:{assignedAt:true,deliveredAt:true}}),
-      prisma.order.findMany({where:{isDemo:false,...dateRange},orderBy:{createdAt:'desc'},take:8,select:{id:true,status:true,totalMinor:true,createdAt:true,customer:{select:{name:true}},vendor:{select:{name:true}}}}),
+      prisma.order.findMany({where:{isDemo:false,...dateRange},orderBy:{createdAt:'desc'},take:8,select:{id:true,displayNumber:true,status:true,totalMinor:true,createdAt:true,customer:{select:{name:true}},vendor:{select:{name:true}}}}),
       prisma.$queryRaw<Array<{day:string;orders:number;gmvMinor:bigint}>>`
         SELECT TO_CHAR(DATE("createdAt" AT TIME ZONE 'Africa/Lagos'),'YYYY-MM-DD') AS day,
           COUNT(*)::int AS orders,
@@ -1339,7 +1380,7 @@ app.get('/api/v1/admin/transactions',requireUser,requireAdminPermission('finance
   const where:Prisma.PaymentWhereInput={isDemo:false,...(input.data.status?{status:input.data.status}:{}),...(input.data.q?{OR:[{id:{contains:input.data.q,mode:'insensitive'}},{providerReference:{contains:input.data.q,mode:'insensitive'}},{orderId:{contains:input.data.q,mode:'insensitive'}}]}:{})};
   try{
     const [data,total]=await Promise.all([
-      prisma.payment.findMany({where,orderBy:{createdAt:'desc'},skip:(input.data.page-1)*input.data.limit,take:input.data.limit,select:{id:true,orderId:true,amountMinor:true,status:true,provider:true,providerReference:true,createdAt:true,updatedAt:true,order:{select:{status:true,customer:{select:{name:true}},vendor:{select:{name:true}}}}}}),
+      prisma.payment.findMany({where,orderBy:{createdAt:'desc'},skip:(input.data.page-1)*input.data.limit,take:input.data.limit,select:{id:true,orderId:true,amountMinor:true,status:true,provider:true,providerReference:true,createdAt:true,updatedAt:true,order:{select:{id:true,displayNumber:true,status:true,customer:{select:{name:true}},vendor:{select:{name:true}}}}}}),
       prisma.payment.count({where})
     ]);
     return res.json({data,total,page:input.data.page,pageSize:input.data.limit});

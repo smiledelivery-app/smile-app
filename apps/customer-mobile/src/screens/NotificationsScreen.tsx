@@ -5,6 +5,7 @@ import { BackHeader } from '../components/ui';
 import type { NotificationInboxItem } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
+import { formatOrderNumber } from '../utils/format';
 
 type Props={
   items:NotificationInboxItem[];
@@ -33,10 +34,10 @@ export default function NotificationsScreen({items,unreadCount,loading,error,has
       :items.length===0?<View style={s.empty}><View style={s.emptyIcon}><Ionicons name="notifications-outline" size={23} color={p.primary}/></View><Text style={s.emptyTitle}>You’re all caught up</Text><Text style={s.emptyCopy}>New updates will appear here.</Text></View>
       :<>
         <View style={s.listHeading}><View><Text style={s.headingTitle}>Recent updates</Text><Text style={s.headingMeta}>{unreadCount} unread</Text></View>{unreadCount>0&&<Pressable accessibilityRole="button" onPress={onReadAll}><Text style={s.readAll}>Mark all read</Text></Pressable>}</View>
-        {items.map(item=><Pressable key={item.id} accessibilityRole="button" accessibilityHint={item.orderId?`Opens order ${item.orderId.slice(-8)}`:'Opens this notification'} onPress={()=>onOpen(item)} style={({pressed})=>[s.card,!item.readAt&&s.unread,pressed&&s.pressed]}>
+        {items.map(item=><Pressable key={item.id} accessibilityRole="button" accessibilityHint={item.orderId?`Opens order ${formatOrderNumber(item.displayNumber,item.orderId)}`:'Opens this notification'} onPress={()=>onOpen(item)} style={({pressed})=>[s.card,!item.readAt&&s.unread,pressed&&s.pressed]}>
           <View style={s.icon}><Ionicons name={iconFor(item.type)} size={21} color={c.green}/></View>
           <View style={s.copy}><View style={s.cardHeading}><Text style={s.cardTitle}>{item.title}</Text><Text style={s.date}>{new Date(item.createdAt).toLocaleDateString('en-NG',{day:'numeric',month:'short'})}</Text></View>
-            {item.orderId&&<Text style={s.vendor} numberOfLines={1}>Order #{item.orderId.slice(-8).toUpperCase()}</Text>}
+            {item.orderId&&<Text style={s.vendor} numberOfLines={1}>Order {formatOrderNumber(item.displayNumber,item.orderId)}</Text>}
             <Text style={s.message}>{item.body}</Text>
           </View>{!item.readAt&&<View style={s.unreadDot}/>}
         </Pressable>)}

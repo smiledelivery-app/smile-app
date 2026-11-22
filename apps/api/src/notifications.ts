@@ -17,8 +17,8 @@ type PushPayload = {
   data: { notificationId: string; type: string; orderId?: string };
 };
 
-export function notificationCopy(status: string, orderId: string, vendorName: string) {
-  const shortId = orderId.slice(-8).toUpperCase();
+export function notificationCopy(status: string, orderId: string, vendorName: string, displayNumber?: number|null) {
+  const shortId = displayNumber ? String(displayNumber).padStart(9,'0') : orderId.slice(-8).toUpperCase();
   const messages: Record<string, { title: string; body: string }> = {
     PENDING_PAYMENT: { title: 'Complete your payment', body: `Order #${shortId} is waiting for payment.` },
     CONFIRMED: { title: 'Order received', body: `${vendorName} has received order #${shortId}.` },

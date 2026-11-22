@@ -364,7 +364,7 @@ export default function AddressPickerModal({ visible, token, colors: c, manageMo
         <View style={s.header}>
           <View style={s.headerCopy}>
             <Text style={s.kicker}>{manageMode ? 'YOUR PLACES' : 'DELIVERY LOCATION'}</Text>
-            <Text style={s.title}>Where should we deliver?</Text>
+            <Text style={s.title}>{manageMode ? 'Saved addresses' : 'Where should we deliver?'}</Text>
             <Text style={s.headerSub}>{manageMode ? 'Manage your saved places' : 'Choose a saved place or set a new pinned location'}</Text>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Close address picker" onPress={onClose} style={s.iconButton}>

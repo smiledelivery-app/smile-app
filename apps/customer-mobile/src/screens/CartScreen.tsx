@@ -6,7 +6,7 @@ import type { CartLine } from '../types/cart';
 import { darkColors, lightColors } from '../theme/colors';
 import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
-type Props={lines:CartLine[];subtotal:number;address:string;locationLabel:string;hasPinnedLocation:boolean;busy:boolean;error:string;hasAccount:boolean;dark:boolean;onQuantity:(lineId:string,delta:number)=>void;onPlaceOrder:()=>void;onBrowse:()=>void;onSignIn:()=>void;onPickAddress:()=>void};
+type Props={lines:CartLine[];subtotal:number;address:string;locationLabel:string;hasPinnedLocation:boolean;busy:boolean;error:string;hasAccount:boolean;dark:boolean;demoMode:boolean;pendingPayment:boolean;onQuantity:(lineId:string,delta:number)=>void;onPlaceOrder:()=>void;onContinuePayment:()=>void;onBrowse:()=>void;onSignIn:()=>void;onPickAddress:()=>void};
 const money=(minor:number)=>`₦${(minor/100).toLocaleString('en-NG')}`;
 
 export default function CartScreen(p:Props){
@@ -28,7 +28,7 @@ export default function CartScreen(p:Props){
               {line.addons.map(x=><Text key={x.addon.id} style={s.addon}>+ {x.quantity} × {x.addon.name}</Text>)}
               <Text style={s.unitPrice}>{money(unit)} each</Text><Text style={s.lineTotal}>{money(unit*line.quantity)}</Text>
             </View>
-            <View style={s.quantity}><Pressable accessibilityRole="button" accessibilityLabel={`Remove one ${line.product.name}`} onPress={()=>p.onQuantity(line.id,-1)} style={s.qtyButton}><Text style={s.qtyText}>−</Text></Pressable><Text style={s.qty}>{line.quantity}</Text><Pressable accessibilityRole="button" accessibilityLabel={`Add one ${line.product.name}`} onPress={()=>p.onQuantity(line.id,1)} style={s.qtyButton}><Text style={s.qtyText}>+</Text></Pressable></View>
+            <View style={s.quantity}><Pressable accessibilityRole="button" accessibilityLabel={`Remove one ${line.product.name}`} disabled={p.pendingPayment} onPress={()=>p.onQuantity(line.id,-1)} style={[s.qtyButton,p.pendingPayment&&s.disabled]}><Text style={s.qtyText}>−</Text></Pressable><Text style={s.qty}>{line.quantity}</Text><Pressable accessibilityRole="button" accessibilityLabel={`Add one ${line.product.name}`} disabled={p.pendingPayment} onPress={()=>p.onQuantity(line.id,1)} style={[s.qtyButton,p.pendingPayment&&s.disabled]}><Text style={s.qtyText}>+</Text></Pressable></View>
           </View>;
         })}</View>
 
@@ -41,8 +41,8 @@ export default function CartScreen(p:Props){
           <Ionicons name="chevron-forward" size={19} color={c.muted}/>
         </Pressable>
         {p.error?<View style={s.errorBox}><Ionicons name="alert-circle-outline" size={18} color="#a34232"/><Text style={s.error}>{p.error}</Text></View>:null}
-        <Pressable accessibilityRole="button" disabled={p.busy} onPress={p.hasPinnedLocation?(p.hasAccount?p.onPlaceOrder:p.onSignIn):p.onPickAddress} style={({pressed})=>[s.checkout,p.busy&&s.disabled,pressed&&!p.busy&&s.pressed]}><Text style={s.checkoutText}>{p.busy?'Placing your order…':!p.hasPinnedLocation?'Choose delivery location':p.hasAccount?'Review and place order':'Sign in to continue'}</Text><Ionicons name="arrow-forward" size={19} color="white"/></Pressable>
-        <Text style={s.note}>Development checkout is isolated and does not charge money.</Text>
+        <Pressable accessibilityRole="button" disabled={p.busy} onPress={p.pendingPayment?p.onContinuePayment:p.hasPinnedLocation?(p.hasAccount?p.onPlaceOrder:p.onSignIn):p.onPickAddress} style={({pressed})=>[s.checkout,p.busy&&s.disabled,pressed&&!p.busy&&s.pressed]}><Text style={s.checkoutText}>{p.busy?'Processing…':p.pendingPayment?'Continue to payment':!p.hasPinnedLocation?'Choose delivery location':p.hasAccount?'Review and place order':'Sign in to continue'}</Text><Ionicons name="arrow-forward" size={19} color="white"/></Pressable>
+        <Text style={s.note}>{p.demoMode?'Development checkout is isolated and does not charge money.':'Pay securely with your Smile wallet or Paystack.'}</Text>
       </>}
     </ScrollView>
   </View>;

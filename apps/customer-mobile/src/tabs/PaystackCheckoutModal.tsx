@@ -7,27 +7,26 @@ import { Ionicons } from '../components/AppIcon';
 import type { AppColors } from '../theme/colors';
 import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
-type Props={visible:boolean;authorizationUrl:string;reference:string;colors:AppColors;onClose:()=>void;onPaymentReturn:(reference:string)=>void};
+type Props={visible:boolean;authorizationUrl:string;reference:string;colors:AppColors;subtitle?:string;confirmationMessage?:string;onClose:()=>void;onPaymentReturn:(reference:string)=>void};
 const bridgeScript=`(function(){var previous='';var sendLocation=function(){var current=window.location.href;if(current!==previous&&window.ReactNativeWebView){previous=current;window.ReactNativeWebView.postMessage(current);}};sendLocation();window.addEventListener('pageshow',sendLocation);setInterval(sendLocation,500);})();true;`;
 
-export default function PaystackCheckoutModal({visible,authorizationUrl,reference,colors,onClose,onPaymentReturn}:Props){
+export default function PaystackCheckoutModal({visible,authorizationUrl,reference,colors,subtitle='Top up your Smile wallet',confirmationMessage='Payment details are handled securely by Paystack. Your wallet updates only after the payment is verified.',onClose,onPaymentReturn}:Props){
   const s=styles(colors);
   const onMessage=useCallback((event:{nativeEvent:{data:string}})=>{
     try{
       const destination=new URL(event.nativeEvent.data);
-      if(destination.hostname.endsWith('paystack.com'))return;
-      if(destination.searchParams.get('reference')===reference)onPaymentReturn(reference);
+      if(destination.searchParams.get('reference')===reference||destination.searchParams.get('trxref')===reference)onPaymentReturn(reference);
     }catch{}
   },[onPaymentReturn,reference]);
   return <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
     <SafeAreaView style={s.screen} edges={['top','bottom']}>
       <View style={s.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close Paystack checkout" onPress={onClose} style={s.close}><Ionicons name="close" size={23} color={colors.ink}/></Pressable>
-        <View style={s.heading}><Text style={s.title}>Secure checkout</Text><Text style={s.subtitle}>Top up your Smile wallet</Text></View>
+        <View style={s.heading}><Text style={s.title}>Secure checkout</Text><Text style={s.subtitle}>{subtitle}</Text></View>
         <View style={s.lock}><Ionicons name="lock-closed-outline" size={17} color={colors.green}/></View>
       </View>
       <View style={s.webview}><WebView source={{uri:authorizationUrl}} injectedJavaScript={bridgeScript} onMessage={onMessage} style={s.webview}/></View>
-      <View style={s.footer}><View style={s.footerIcon}><Ionicons name="shield-checkmark-outline" size={19} color={colors.green}/></View><Text style={s.footerText}>Payment details are handled securely by Paystack. Your wallet updates only after the payment is verified.</Text></View>
+      <View style={s.footer}><View style={s.footerIcon}><Ionicons name="shield-checkmark-outline" size={19} color={colors.green}/></View><Text style={s.footerText}>{confirmationMessage}</Text></View>
     </SafeAreaView>
   </Modal>;
 }

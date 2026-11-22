@@ -24,14 +24,16 @@ import { customerPalette, customerRadius } from '../theme/customer';
 import type { CustomerScreen } from './types';
 import VendorMenuScreen from '../screens/VendorMenuScreen';
 import CartScreen from '../screens/CartScreen';
+import OrderPaymentModal from '../screens/OrderPaymentModal';
 import type { CartLine } from '../types/cart';
 import AddressPickerModal, { type SavedAddress } from '../screens/AddressPickerModal';
+import PaystackCheckoutModal from '../tabs/PaystackCheckoutModal';
 import OrderDetailScreen from '../screens/OrderDetailScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import WalletActivityScreen from '../screens/WalletActivityScreen';
 import PasswordSettingsScreen from '../settings/PasswordSettingsScreen';
 import PreferencesScreen from '../settings/PreferencesScreen';
-import { AccountInfoScreen, DeleteAccountScreen, EditProfileScreen, FavoritesScreen, type AccountProfile } from '../screens/AccountScreens';
+import { AccountInfoScreen, DeleteAccountScreen, EditProfileScreen, FavoritesScreen, type AccountProfile, type FavoriteProduct } from '../screens/AccountScreens';
 import { mobileEnv } from '../config/env';
 import { demoLocation, demoOrders, demoVendors } from '../demo/demoData';
 
@@ -52,6 +54,17 @@ const SecureStore={
 type PopularProduct={product:Product;vendor:Vendor};
 const demoRecentSearches=['Suya','Green Bowl','Yaba'];
 const selectedAddressStorageKey=(userId:string)=>Platform.OS==='web'?`makanza-customer-selected-address-v1:${userId}`:`makanza-customer-selected-address-v1-${userId}`;
+const isFavoriteProduct=(value:unknown):value is FavoriteProduct=>{
+  if(!value||typeof value!=='object')return false;
+  const row=value as Record<string,unknown>;
+  const productVendor=row.vendor;
+  if(!productVendor||typeof productVendor!=='object')return false;
+  const vendor=productVendor as Record<string,unknown>;
+  return typeof row.id==='string'&&typeof row.name==='string'&&(typeof row.imageUrl==='string'||row.imageUrl===null)&&typeof row.priceMinor==='number'
+    &&typeof vendor.id==='string'&&typeof vendor.name==='string'&&typeof vendor.cuisine==='string'&&typeof vendor.neighborhood==='string'
+    &&typeof vendor.eta==='string'&&typeof vendor.fee==='number'&&(typeof vendor.rating==='number'||vendor.rating===null)
+    &&typeof vendor.image==='string'&&typeof vendor.open==='boolean'&&typeof vendor.demo==='boolean';
+};
 const hasDeliveryCoordinates=(place:SavedAddress|null|undefined):place is SavedAddress&{latitude:number|string;longitude:number|string}=>place?.latitude!==null&&place?.latitude!==undefined&&place.longitude!==null&&place.longitude!==undefined&&Number.isFinite(Number(place.latitude))&&Number.isFinite(Number(place.longitude));
 const logPhoneVerificationError=(event:string,error:unknown)=>{
   if(error instanceof ApiError)console.error(event,{status:error.status,code:error.code,providerResponse:error.details??null});
@@ -84,6 +97,10 @@ export default function App(){
   const [notificationsError,setNotificationsError]=useState('');
   const [pushToken,setPushToken]=useState('');
   const [cart,setCart]=useState<CartLine[]>([]);
+  const [pendingPaymentOrder,setPendingPaymentOrder]=useState<{id:string;totalMinor:number}|null>(null);
+  const [paymentPickerVisible,setPaymentPickerVisible]=useState(false);
+  const [paymentError,setPaymentError]=useState('');
+  const [orderCheckout,setOrderCheckout]=useState<{orderId:string;authorizationUrl:string;reference:string}|null>(null);
   const [activeVendor,setActiveVendor]=useState<Vendor|null>(null);
   const [screen,setScreenState]=useState<CustomerScreen>('home');
   const screenHistory=useRef<CustomerScreen[]>([]);
@@ -91,10 +108,11 @@ export default function App(){
   const goBack=()=>setScreenState(()=>screenHistory.current.pop()??'home');
   const [mode,setMode]=useState<'login'|'register'>('login');
   const [name,setName]=useState('');const [email,setEmail]=useState('');const [password,setPassword]=useState('');
-  const [loading,setLoading]=useState(true);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [notice,setNotice]=useState('');
+  const [loading,setLoading]=useState(true);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [notice,setNotice]=useState('');const [cartAddedNotice,setCartAddedNotice]=useState('');
   const [query,setQuery]=useState('');
   const [recentSearches,setRecentSearches]=useState<string[]>(mobileEnv.demoMode?demoRecentSearches:[]);
   const [favoriteVendorIds,setFavoriteVendorIds]=useState<string[]>(mobileEnv.demoMode?['demo-vendor-ada','demo-vendor-green']:[]);
+  const [favoriteProducts,setFavoriteProducts]=useState<FavoriteProduct[]>([]);
   const [newsletter,setNewsletter]=useState(false);
   const [colorMode,setColorMode]=useState<'light'|'dark'>('light');
   const [onboardingReady,setOnboardingReady]=useState(false);
@@ -140,7 +158,45 @@ export default function App(){
     return()=>subscription.remove();
   },[screen,addressPicker]);
 
-  useEffect(()=>{let active=true;void Promise.all([SecureStore.getItemAsync('makanza-customer-theme-v1').catch(()=>null),SecureStore.getItemAsync('makanza-customer-auto-refresh-v1').catch(()=>null),SecureStore.getItemAsync('makanza-customer-newsletter-v1').catch(()=>null),SecureStore.getItemAsync('makanza-customer-favorites-v1').catch(()=>null),SecureStore.getItemAsync('makanza-customer-recent-searches-v1').catch(()=>null)]).then(async([theme,refresh,newsletterValue,favorites,recent])=>{if(!active)return;if(theme==='dark'||theme==='light')setColorMode(theme);if(refresh==='false')setAutoRefresh(false);if(newsletterValue==='true')setNewsletter(true);try{if(favorites===null){if(mobileEnv.demoMode)await SecureStore.setItemAsync('makanza-customer-favorites-v1',JSON.stringify(['demo-vendor-ada','demo-vendor-green']));}else{const parsed:unknown=JSON.parse(favorites);if(Array.isArray(parsed)&&parsed.every(item=>typeof item==='string'))setFavoriteVendorIds(parsed);}}catch{if(active)setNotice('Favourites could not be loaded from this device.');}try{if(recent==='__cleared__')setRecentSearches([]);else if(recent===null){if(mobileEnv.demoMode)await SecureStore.setItemAsync('makanza-customer-recent-searches-v1',JSON.stringify(demoRecentSearches));}else{const parsed:unknown=JSON.parse(recent);if(Array.isArray(parsed)&&parsed.every(item=>typeof item==='string'))setRecentSearches(parsed.length?parsed.slice(0,8):mobileEnv.demoMode?demoRecentSearches:[]);}}catch{if(active)setNotice('Recent searches could not be loaded from this device.');}}).finally(()=>{if(active)setPreferencesReady(true);});return()=>{active=false;};},[]);
+  useEffect(()=>{
+    let active=true;
+    void Promise.all([
+      SecureStore.getItemAsync('makanza-customer-theme-v1').catch(()=>null),
+      SecureStore.getItemAsync('makanza-customer-auto-refresh-v1').catch(()=>null),
+      SecureStore.getItemAsync('makanza-customer-newsletter-v1').catch(()=>null),
+      SecureStore.getItemAsync('makanza-customer-favorites-v1').catch(()=>null),
+      SecureStore.getItemAsync('makanza-customer-favorite-products-v1').catch(()=>null),
+      SecureStore.getItemAsync('makanza-customer-recent-searches-v1').catch(()=>null),
+    ]).then(async([theme,refresh,newsletterValue,favorites,savedProducts,recent])=>{
+      if(!active)return;
+      if(theme==='dark'||theme==='light')setColorMode(theme);
+      if(refresh==='false')setAutoRefresh(false);
+      if(newsletterValue==='true')setNewsletter(true);
+      try{
+        if(favorites===null){
+          if(mobileEnv.demoMode)await SecureStore.setItemAsync('makanza-customer-favorites-v1',JSON.stringify(['demo-vendor-ada','demo-vendor-green']));
+        }else{
+          const parsed:unknown=JSON.parse(favorites);
+          if(Array.isArray(parsed)&&parsed.every(item=>typeof item==='string'))setFavoriteVendorIds(parsed);
+        }
+        if(savedProducts!==null){
+          const parsed:unknown=JSON.parse(savedProducts);
+          if(Array.isArray(parsed)&&parsed.every(isFavoriteProduct))setFavoriteProducts(parsed);
+          else throw new Error('Saved product favourites are invalid.');
+        }
+      }catch{if(active)setNotice('Favourites could not be loaded from this device.');}
+      try{
+        if(recent==='__cleared__')setRecentSearches([]);
+        else if(recent===null){
+          if(mobileEnv.demoMode)await SecureStore.setItemAsync('makanza-customer-recent-searches-v1',JSON.stringify(demoRecentSearches));
+        }else{
+          const parsed:unknown=JSON.parse(recent);
+          if(Array.isArray(parsed)&&parsed.every(item=>typeof item==='string'))setRecentSearches(parsed.length?parsed.slice(0,8):mobileEnv.demoMode?demoRecentSearches:[]);
+        }
+      }catch{if(active)setNotice('Recent searches could not be loaded from this device.');}
+    }).finally(()=>{if(active)setPreferencesReady(true);});
+    return()=>{active=false;};
+  },[]);
   useEffect(()=>{SecureStore.getItemAsync('makanza-customer-onboarding-v1').then(value=>setHasOnboarded(value==='complete')).catch(()=>setHasOnboarded(false)).finally(()=>setOnboardingReady(true));},[]);
   useEffect(()=>{if(!token)return;let active=true;void api.get<AccountProfile>('/auth/profile',token).then(profile=>{if(!active)return;setSession(current=>current?{...current,user:{...current.user,name:profile.name,email:profile.email,phone:profile.phone}}:current);}).catch(reason=>{if(active)setNotice(reason instanceof Error?`Profile details unavailable: ${reason.message}`:'Profile details unavailable.');});return()=>{active=false;};},[token]);
 
@@ -148,6 +204,19 @@ export default function App(){
   const recordRecentSearch=(term:string)=>{const normalized=term.trim();if(!normalized)return;const next=[normalized,...recentSearches.filter(item=>item.toLowerCase()!==normalized.toLowerCase())].slice(0,8);setRecentSearches(next);void SecureStore.setItemAsync('makanza-customer-recent-searches-v1',JSON.stringify(next)).catch(()=>setNotice('Recent searches could not be saved on this device.'));};
   const clearRecentSearches=()=>{setRecentSearches([]);void SecureStore.setItemAsync('makanza-customer-recent-searches-v1','__cleared__').catch(()=>setNotice('Recent searches could not be cleared from this device.'));};
   const toggleFavorite=(vendorId:string)=>{const next=favoriteVendorIds.includes(vendorId)?favoriteVendorIds.filter(id=>id!==vendorId):[...favoriteVendorIds,vendorId];setFavoriteVendorIds(next);void SecureStore.setItemAsync('makanza-customer-favorites-v1',JSON.stringify(next)).catch(()=>setNotice('Favourites could not be saved on this device.'));};
+  const toggleProductFavorite=(product:Product,vendor:Vendor)=>{
+    const isSaved=favoriteProducts.some(item=>item.id===product.id&&item.vendor.id===vendor.id);
+    const next=isSaved
+      ?favoriteProducts.filter(item=>item.id!==product.id||item.vendor.id!==vendor.id)
+      :[...favoriteProducts,{id:product.id,name:product.name,imageUrl:product.imageUrl,priceMinor:product.priceMinor,vendor}];
+    setFavoriteProducts(next);
+    void SecureStore.setItemAsync('makanza-customer-favorite-products-v1',JSON.stringify(next)).catch(()=>setNotice('Favourites could not be saved on this device.'));
+  };
+  const removeProductFavorite=(productId:string,vendorId:string)=>{
+    const next=favoriteProducts.filter(item=>item.id!==productId||item.vendor.id!==vendorId);
+    setFavoriteProducts(next);
+    void SecureStore.setItemAsync('makanza-customer-favorite-products-v1',JSON.stringify(next)).catch(()=>setNotice('Favourites could not be saved on this device.'));
+  };
   const saveProfile=(profile:AccountProfile)=>{if(!session){if(mobileEnv.demoMode)setDemoProfile(current=>({...current,name:profile.name,email:profile.email,phone:profile.phone}));return;}const next={...session,user:{...session.user,name:profile.name,email:profile.email,phone:profile.phone}};setSession(next);void SecureStore.setItemAsync('makanza-session',JSON.stringify(next)).catch(()=>setNotice('Profile saved, but this device could not update the saved session.'));};
   const completeAccountDeletion=async()=>{await SecureStore.deleteItemAsync('makanza-session');setSession(null);setSelectedAddress(null);setScreen('profile');setNotice('Your Smile account has been deleted.');};
   const loadOrders=useCallback(async(currentToken:string,quiet=false)=>{if(!quiet){setLoading(true);setError('');}try{setOrders(await api.get<CustomerOrder[]>('/orders',currentToken));setError('');}catch(e){setError(e instanceof Error?e.message:'Could not load your orders.');}finally{if(!quiet)setLoading(false);}},[]);
@@ -192,7 +261,7 @@ export default function App(){
   },[token,loadNotifications]);
   useEffect(()=>{if(token)void loadNotifications(token,true);else setNotificationInbox({items:[],unreadCount:0});},[token,loadNotifications]);
   useEffect(()=>{if(screen==='notifications'&&token)void loadNotifications(token);},[screen,token,loadNotifications]);
-  const cancelCustomerOrder=async(orderId:string,reason:CancellationReason,details:string)=>{if(mobileEnv.demoMode){const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Lagos',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());if(demoCancellationMeter.day===day&&demoCancellationMeter.count>=3){setError('You reached today’s 3 cancellation limit and cannot place another order today.');return;}setDemoCancellationMeter(current=>({day,count:(current.day===day?current.count:0)+1}));setOrders(rows=>rows.map(order=>order.id===orderId?{...order,status:'CANCELLED',events:[...order.events,{id:`demo-cancel-${Date.now()}`,status:'CANCELLED',createdAt:new Date().toISOString(),note:`Cancelled: ${details||reason.replaceAll('_',' ').toLowerCase()}`}]}:order));setNotice('Sample order cancelled locally.');return;}if(!token)return;setBusy(true);setError('');try{await api.post(`/orders/${encodeURIComponent(orderId)}/cancel`,{reason,details:details||undefined},token);setNotice('Order cancelled. Your reason was recorded.');await loadOrders(token);}catch(e){setError(e instanceof Error?e.message:'Could not cancel this order.');}finally{setBusy(false);}};
+  const cancelCustomerOrder=async(orderId:string,reason:CancellationReason,details:string)=>{if(mobileEnv.demoMode){const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Lagos',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());if(demoCancellationMeter.day===day&&demoCancellationMeter.count>=3){setError('You reached today’s 3 cancellation limit and cannot place another order today.');return;}setDemoCancellationMeter(current=>({day,count:(current.day===day?current.count:0)+1}));setOrders(rows=>rows.map(order=>order.id===orderId?{...order,status:'CANCELLED',events:[...order.events,{id:`demo-cancel-${Date.now()}`,status:'CANCELLED',createdAt:new Date().toISOString(),note:`Cancelled: ${details||reason.replace(/_/g,' ').toLowerCase()}`}]}:order));setNotice('Sample order cancelled locally.');return;}if(!token)return;setBusy(true);setError('');try{await api.post(`/orders/${encodeURIComponent(orderId)}/cancel`,{reason,details:details||undefined},token);setNotice('Order cancelled. Your reason was recorded.');await loadOrders(token);}catch(e){setError(e instanceof Error?e.message:'Could not cancel this order.');}finally{setBusy(false);}};
   useEffect(()=>{let active=true;if(!vendors.length){setPopularProducts([]);setPopularLoading(false);setPopularError('');return()=>{active=false;};}setPopularLoading(true);setPopularError('');Promise.all(vendors.slice(0,4).map(async vendor=>({vendor,products:await api.get<Product[]>(`/vendors/${encodeURIComponent(vendor.id)}/products`,token)}))).then(groups=>{if(active)setPopularProducts(groups.flatMap(group=>group.products.map(product=>({vendor:group.vendor,product}))));}).catch(reason=>{if(active)setPopularError(reason instanceof Error?reason.message:'Could not load popular items.');}).finally(()=>{if(active)setPopularLoading(false);});return()=>{active=false;};},[vendors]);
   useEffect(()=>{if(screen!=='orders'||!token||!autoRefresh)return;const timer=setInterval(()=>void loadOrders(token,true),10000);return()=>clearInterval(timer);},[screen,token,loadOrders,autoRefresh]);
 
@@ -225,8 +294,121 @@ export default function App(){
     }catch(e){logPhoneVerificationError('[phone verification] resend API error',e);setError(e instanceof Error?e.message:'Could not resend your verification code.');return false;}
     finally{setBusy(false);}
   };
-  const add= (product:Product,addons:import('../screens/VendorMenuScreen').Choice[]=[],quantity=1)=>{if(!activeVendor)return;if(cart.length&&cart[0].vendorId!==activeVendor.id){setNotice('Your bag is for one kitchen at a time. Finish or clear the current bag first.');return;}const key=(xs:typeof addons)=>xs.map(x=>`${x.addon.id}:${x.quantity}`).sort().join('|');setCart(lines=>{const existing=lines.find(line=>line.product.id===product.id&&key(line.addons)===key(addons));return existing?lines.map(line=>line.id===existing.id?{...line,quantity:line.quantity+quantity}:line):[...lines,{id:`${product.id}:${key(addons)}:${Date.now()}`,product,quantity,vendorId:activeVendor.id,vendorName:activeVendor.name,addons}];});setNotice(`${quantity>1?`${quantity} × `:''}${product.name}${addons.length?` with ${addons.map(x=>`${x.quantity} ${x.addon.name}`).join(', ')}`:''} added.`);};
-  const placeOrder=async()=>{if(!token&&!mobileEnv.demoMode){setScreen('profile');setNotice('Sign in to continue.');return;}if(!cart.length)return;if(!hasDeliveryCoordinates(selectedAddress)){setAddressPicker(true);setNotice('Choose a location on the map before placing your order.');return;}if(mobileEnv.demoMode){const now=new Date().toISOString();const vendor=demoVendors.find(item=>item.id===cart[0].vendorId);const totalMinor=cart.reduce((sum,line)=>sum+(line.product.priceMinor+line.addons.reduce((addonsTotal,item)=>addonsTotal+item.addon.priceMinor*item.quantity,0))*line.quantity,0)+(vendor?.fee??0)*100;const order:CustomerOrder={id:`demo-order-${Date.now()}`,status:'CONFIRMED',totalMinor,createdAt:now,vendor:{name:cart[0].vendorName},delivery:{status:'UNASSIGNED',assignedAt:null,riderName:null},items:cart.map((line,index)=>({id:`demo-line-${Date.now()}-${index}`,nameSnapshot:line.product.name,quantity:line.quantity,unitPriceMinor:line.product.priceMinor,addons:line.addons.map(item=>({id:item.addon.id,nameSnapshot:item.addon.name,quantity:item.quantity,unitPriceMinor:item.addon.priceMinor}))})),events:[{id:`demo-event-${Date.now()}`,status:'CONFIRMED',createdAt:now}]};setOrders(current=>[order,...current]);setCart([]);setScreen('orders');setNotice('Sample order placed locally. No payment or delivery request was sent.');return;}setBusy(true);setError('');try{const order=await api.post<{id:string}>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(l=>({productId:l.product.id,quantity:l.quantity,addons:l.addons.map(x=>({addonId:x.addon.id,quantity:x.quantity}))}))},token!);setCart([]);setScreen('orders');setNotice(`Order ${order.id.slice(-8)} placed. Demo checkout does not charge money.`);await loadOrders(token!);}catch(e){setError(e instanceof Error?e.message:'Could not place the order.');}finally{setBusy(false);}};
+  const add= (product:Product,addons:import('../screens/VendorMenuScreen').Choice[]=[],quantity=1)=>{if(!activeVendor)return;if(pendingPaymentOrder){setNotice('Finish payment for your current order before adding more items.');return;}if(cart.length&&cart[0].vendorId!==activeVendor.id){setNotice('Your bag is for one kitchen at a time. Finish or clear the current bag first.');return;}const key=(xs:typeof addons)=>xs.map(x=>`${x.addon.id}:${x.quantity}`).sort().join('|');setCart(lines=>{const existing=lines.find(line=>line.product.id===product.id&&key(line.addons)===key(addons));return existing?lines.map(line=>line.id===existing.id?{...line,quantity:line.quantity+quantity}:line):[...lines,{id:`${product.id}:${key(addons)}:${Date.now()}`,product,quantity,vendorId:activeVendor.id,vendorName:activeVendor.name,addons}];});const message=`${quantity>1?`${quantity} × `:''}${product.name}${addons.length?` with ${addons.map(x=>`${x.quantity} ${x.addon.name}`).join(', ')}`:''} added.`;setCartAddedNotice(message);setNotice(message);};
+  const placeOrder=async()=>{
+    if(!token&&!mobileEnv.demoMode){setScreen('profile');setNotice('Sign in to continue.');return;}
+    if(!cart.length)return;
+    if(!hasDeliveryCoordinates(selectedAddress)){setAddressPicker(true);setNotice('Choose a location on the map before placing your order.');return;}
+    if(mobileEnv.demoMode){
+      const now=new Date().toISOString();
+      const vendor=demoVendors.find(item=>item.id===cart[0].vendorId);
+      const totalMinor=cart.reduce((sum,line)=>sum+(line.product.priceMinor+line.addons.reduce((addonsTotal,item)=>addonsTotal+item.addon.priceMinor*item.quantity,0))*line.quantity,0)+(vendor?.fee??0)*100;
+      const order:CustomerOrder={id:`demo-order-${Date.now()}`,displayNumber:1043,status:'CONFIRMED',totalMinor,createdAt:now,vendor:{name:cart[0].vendorName},delivery:{status:'UNASSIGNED',assignedAt:null,riderName:null},items:cart.map((line,index)=>({id:`demo-line-${Date.now()}-${index}`,nameSnapshot:line.product.name,quantity:line.quantity,unitPriceMinor:line.product.priceMinor,addons:line.addons.map(item=>({id:item.addon.id,nameSnapshot:item.addon.name,quantity:item.quantity,unitPriceMinor:item.addon.priceMinor}))})),events:[{id:`demo-event-${Date.now()}`,status:'CONFIRMED',createdAt:now}]};
+      setOrders(current=>[order,...current]);
+      setCart([]);
+      setScreen('orders');
+      setNotice('Sample order placed locally. No payment or delivery request was sent.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try{
+      const order=await api.post<{id:string;totalMinor:number;status:string}>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(line=>({productId:line.product.id,quantity:line.quantity,addons:line.addons.map(item=>({addonId:item.addon.id,quantity:item.quantity}))}))},token!);
+      if(order.status==='CONFIRMED'){
+        setCart([]);
+        setScreen('orders');
+        setNotice('Your order is confirmed.');
+        await loadOrders(token!);
+        return;
+      }
+      setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});
+      setPaymentError('');
+      setPaymentPickerVisible(true);
+      setNotice('Your order is ready. Choose how you would like to pay.');
+    }catch(e){setError(e instanceof Error?e.message:'Could not place the order.');}
+    finally{setBusy(false);}
+  };
+  const payForOrder=async(method:'wallet'|'paystack')=>{
+    if(!token||!pendingPaymentOrder)return;
+    setBusy(true);
+    setPaymentError('');
+    try{
+      const result=await api.post<{orderId:string;status:string;method?:'wallet'|'paystack';authorizationUrl?:string;reference?:string}>(`/orders/${encodeURIComponent(pendingPaymentOrder.id)}/pay`,{method},token);
+      if(method==='wallet'){
+        if(result.status!=='CONFIRMED')throw new Error('Your wallet payment could not be confirmed. Please try again.');
+        setPaymentPickerVisible(false);
+        setPendingPaymentOrder(null);
+        setCart([]);
+        setScreen('orders');
+        setNotice('Wallet payment complete. Your order is confirmed.');
+        await loadOrders(token);
+        return;
+      }
+      if(!result.authorizationUrl||!result.reference)throw new Error('Paystack did not return checkout details. Please try again.');
+      setPaymentPickerVisible(false);
+      setOrderCheckout({orderId:result.orderId,authorizationUrl:result.authorizationUrl,reference:result.reference});
+    }catch(reason){setPaymentError(reason instanceof Error?reason.message:'Could not start payment. Your order is still awaiting payment.');}
+    finally{setBusy(false);}
+  };
+  const handleOrderPaymentReturn=async(reference:string)=>{
+    if(!token||!orderCheckout)return;
+    const checkout=orderCheckout;
+    setOrderCheckout(null);
+    setPaymentPickerVisible(false);
+    setScreen('orders');
+    setNotice('Verifying your Paystack payment…');
+    try{
+      const result=await api.post<{status:string;confirmed:boolean}>(`/orders/${encodeURIComponent(checkout.orderId)}/pay/verify`,{reference},token);
+      if(result.confirmed){
+        setPendingPaymentOrder(null);
+        setCart([]);
+        setNotice('Paystack payment confirmed. Your order is ready.');
+      }else setNotice('Paystack is still confirming your payment. Your order will update when verification completes.');
+    }catch(reason){
+      setNotice(reason instanceof Error?`Could not confirm payment yet: ${reason.message}`:'Could not confirm payment yet. Your order will update when verification completes.');
+    }
+    await loadOrders(token,true);
+  };
+  const closeOrderCheckout=()=>{
+    setOrderCheckout(null);
+    setPaymentPickerVisible(true);
+    setPaymentError('Paystack checkout was closed. Your order is still awaiting payment.');
+  };
+  useEffect(()=>{
+    if(!pendingPaymentOrder)return;
+    if(orders.some(order=>order.id===pendingPaymentOrder.id&&order.status==='CONFIRMED')){
+      setPendingPaymentOrder(null);
+      setPaymentPickerVisible(false);
+      setCart([]);
+    }
+  },[orders,pendingPaymentOrder]);
+  useEffect(()=>{
+    if(!orderCheckout||!token)return;
+    let active=true;
+    let timer:ReturnType<typeof setTimeout>|null=null;
+    const checkout=orderCheckout;
+    const checkPayment=async()=>{
+      try{
+        const result=await api.post<{status:string;confirmed:boolean}>(`/orders/${encodeURIComponent(checkout.orderId)}/pay/verify`,{reference:checkout.reference},token);
+        if(!active)return;
+        if(result.confirmed){
+          setOrderCheckout(null);
+          setPendingPaymentOrder(null);
+          setPaymentPickerVisible(false);
+          setCart([]);
+          setScreen('orders');
+          setNotice('Paystack payment confirmed. Your order is ready.');
+          await loadOrders(token,true);
+          return;
+        }
+      }catch(reason){
+        if(active)setPaymentError(reason instanceof Error?`Could not check payment status: ${reason.message}`:'Could not check payment status.');
+      }
+      if(active)timer=setTimeout(()=>void checkPayment(),10000);
+    };
+    timer=setTimeout(()=>void checkPayment(),8000);
+    return()=>{active=false;if(timer!==null)clearTimeout(timer);};
+  },[orderCheckout,token,loadOrders]);
   const openVendor=async(vendor:Vendor)=>{setActiveVendor(vendor);setProducts([]);setScreen('menu');};
   const openNotification=async(item:NotificationInboxItem)=>{
     await markNotificationRead(item);
@@ -268,10 +450,10 @@ export default function App(){
   </View>}
     {screen==='home'&&<HomeScreen vendors={vendors} userLocation={homeLocation} popularProducts={popularProducts} popularLoading={popularLoading} popularError={popularError} loading={loading} error={error} query={query} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);setScreen('search');void loadVendors(searchTerm);}} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/>}
     {screen==='search'&&<SearchScreen query={query} recentSearches={recentSearches} vendors={vendors} loading={loading&&vendors.length===0} error={error} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);void loadVendors(searchTerm);}} onRecentSearch={term=>{setQuery(term);recordRecentSearch(term);void loadVendors(term);}} onClearRecent={clearRecentSearches} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/> }
-    {screen==='wallet'&&<WalletScreen token={token??null} demoMode={mobileEnv.demoMode} colors={colors} onSignIn={()=>setScreen('profile')}/>}
-    {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading&&products.length===0} error={error} dark={isDark} userLocation={homeLocation} onBack={goBack} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add}/>} 
-    {screen==='bag'&&<CartScreen lines={cart} subtotal={subtotal} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onPickAddress={()=>setAddressPicker(true)} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onBrowse={goBack} onSignIn={()=>setScreen('profile')}/>} 
-    {screen==='orders'&&<OrdersScreen orders={orders} loading={loading} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onRetry={()=>token&&void loadOrders(token)} onSignIn={()=>setScreen('profile')} onOpen={order=>{setDetailOrder(order);setScreen('order-detail');}} onCancel={(id,reason,details)=>void cancelCustomerOrder(id,reason,details)}/>}
+    {screen==='wallet'&&<WalletScreen token={token??null} demoMode={mobileEnv.demoMode} colors={colors} onSignIn={()=>setScreen('profile')} onHistory={()=>setScreen('wallet-activity')}/>}
+    {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading&&products.length===0} error={error} dark={isDark} userLocation={homeLocation} favoriteVendor={!!activeVendor&&favoriteVendorIds.includes(activeVendor.id)} favoriteProductIds={favoriteProducts.filter(item=>item.vendor.id===activeVendor?.id).map(item=>item.id)} onBack={goBack} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add} onToggleVendorFavorite={()=>activeVendor&&toggleFavorite(activeVendor.id)} onToggleProductFavorite={product=>activeVendor&&toggleProductFavorite(product,activeVendor)}/>}
+    {screen==='bag'&&<CartScreen lines={cart} subtotal={subtotal} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} demoMode={mobileEnv.demoMode} pendingPayment={!!pendingPaymentOrder} onPickAddress={()=>setAddressPicker(true)} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onContinuePayment={()=>{setPaymentError('');setPaymentPickerVisible(true);}} onBrowse={goBack} onSignIn={()=>setScreen('profile')}/>}
+    {screen==='orders'&&<OrdersScreen orders={orders} loading={loading} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onRetry={()=>token&&void loadOrders(token)} onSignIn={()=>setScreen('profile')} onOpen={order=>{setDetailOrder(order);setScreen('order-detail');}} onCancel={(id,reason,details)=>void cancelCustomerOrder(id,reason,details)} onPayOrder={order=>{setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});setPaymentError('');setPaymentPickerVisible(true);}}/>}
     {screen==='notifications'&&<NotificationsScreen items={notificationInbox.items} unreadCount={notificationInbox.unreadCount} loading={notificationsLoading} error={notificationsError} hasAccount={!!session} colors={colors} onRetry={()=>token&&void loadNotifications(token)} onSignIn={()=>setScreen('profile')} onOpen={item=>void openNotification(item)} onReadAll={()=>void markAllNotificationsRead()} onBack={goBack}/>}
     {screen==='order-detail'&&detailOrder&&<OrderDetailScreen order={orders.find(x=>x.id===detailOrder.id)??detailOrder} colors={colors} token={token??null} demoMode={mobileEnv.demoMode} onBack={goBack}/>}
     {screen==='wallet-activity'&&token&&<WalletActivityScreen token={token} colors={colors} onBack={goBack}/>}
@@ -280,19 +462,26 @@ export default function App(){
     {screen==='profile-edit'&&session&&<EditProfileScreen session={session} colors={colors} demoMode={false} onBack={goBack} onSaved={saveProfile}/>}
     {screen==='profile-edit'&&!session&&mobileEnv.demoMode&&<EditProfileScreen session={profileSession} colors={colors} demoMode onBack={goBack} onSaved={saveProfile}/>}
     {screen==='profile-edit'&&!session&&!mobileEnv.demoMode&&<AccountInfoScreen kind="account-required" colors={colors} onBack={goBack}/>}
-    {screen==='favorites'&&<FavoritesScreen colors={colors} vendors={vendors} favoriteIds={favoriteVendorIds} onBack={goBack} onOpen={openVendor} onToggle={toggleFavorite}/>}
+    {screen==='favorites'&&<FavoritesScreen colors={colors} vendors={vendors} favoriteIds={favoriteVendorIds} products={favoriteProducts} onBack={goBack} onOpen={openVendor} onToggleVendor={toggleFavorite} onToggleProduct={removeProductFavorite}/>}
     {(screen==='help'||screen==='about'||screen==='privacy')&&<AccountInfoScreen kind={screen} colors={colors} onBack={goBack}/>}
     {screen==='delete-account'&&token&&<DeleteAccountScreen token={token} colors={colors} onBack={goBack} onDeleted={()=>void completeAccountDeletion()}/>}
     {screen==='delete-account'&&!token&&<AccountInfoScreen kind="account-required" colors={colors} onBack={goBack}/>}
     {screen==='password'&&!token&&<AccountInfoScreen kind="account-required" colors={colors} onBack={goBack}/>}
-    {screen==='profile'&&<ProfileScreen session={profileSession} colors={colors} guest={!session} onSignIn={()=>setScreen('profile')} onSignOut={()=>void signOut()} onEdit={()=>setScreen('profile-edit')} onPreferences={()=>setScreen('preferences')} onPassword={()=>setScreen('password')} onAddresses={()=>{setScreen('addresses');setAddressPicker(true);}} onFavorites={()=>setScreen('favorites')} onHelp={()=>setScreen('help')} onAbout={()=>setScreen('about')}/>}
+    {screen==='profile'&&<ProfileScreen session={profileSession} colors={colors} guest={!session} onSignIn={()=>setScreen('profile')} onSignOut={()=>void signOut()} onEdit={()=>setScreen('profile-edit')} onPreferences={()=>setScreen('preferences')} onPassword={()=>setScreen('password')} onAddresses={()=>{setScreen('addresses');setAddressPicker(true);}} onFavorites={()=>setScreen('favorites')} onWallet={()=>setScreen('wallet')} onHelp={()=>setScreen('help')} onAbout={()=>setScreen('about')}/>}
     {primaryTab&&<TabBar active={screen as 'home'|'search'|'orders'|'wallet'|'profile'} dark={isDark} onChange={tab=>{setScreen(tab);if(tab==='orders'&&token)void loadOrders(token);if(tab==='home')void loadVendors();}}/>}
     <AddressPickerModal visible={addressPicker} token={token??null} colors={colors} manageMode={screen==='addresses'} onClose={()=>{setAddressPicker(false);if(screen==='addresses')goBack();}} onSelect={place=>{chooseAddress(place);if(screen==='addresses')goBack();}} onSignIn={()=>{setAddressPicker(false);setScreen('profile');}}/>
+    {pendingPaymentOrder&&token&&<OrderPaymentModal visible={paymentPickerVisible} token={token} amountMinor={pendingPaymentOrder.totalMinor} busy={busy} error={paymentError} colors={colors} onClose={()=>setPaymentPickerVisible(false)} onPay={method=>void payForOrder(method)}/>}
+    {orderCheckout&&<PaystackCheckoutModal visible authorizationUrl={orderCheckout.authorizationUrl} reference={orderCheckout.reference} colors={colors} subtitle={`Pay for order ${orderCheckout.orderId.slice(-8)}`} confirmationMessage="Your order will be confirmed after Paystack verifies the payment." onClose={closeOrderCheckout} onPaymentReturn={reference=>void handleOrderPaymentReturn(reference)}/>}
     {notice?<View pointerEvents="box-none" accessibilityLiveRegion="polite" style={[toastStyles.position,primaryTab&&toastStyles.aboveTabBar]}>
       <View style={toastStyles.toast}>
-        <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={palette.primary}/></View>
-        <Text style={toastStyles.message}>{notice}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss notification" onPress={()=>setNotice('')} style={toastStyles.dismiss}><Ionicons name="close" size={19} color={colors.muted}/></Pressable>
+        {notice===cartAddedNotice?<Pressable accessibilityRole="button" accessibilityHint="Opens your bag" onPress={()=>{setNotice('');setCartAddedNotice('');setScreen('bag');}} style={{flex:1,flexDirection:'row',alignItems:'center',gap:10}}>
+          <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={palette.primary}/></View>
+          <Text style={toastStyles.message}>{notice}</Text>
+        </Pressable>:<>
+          <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={palette.primary}/></View>
+          <Text style={toastStyles.message}>{notice}</Text>
+        </>}
+        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss notification" onPress={()=>{setNotice('');setCartAddedNotice('');}} style={toastStyles.dismiss}><Ionicons name="close" size={19} color={colors.muted}/></Pressable>
       </View>
     </View>:null}
   </SafeAreaView>;

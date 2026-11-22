@@ -37,7 +37,7 @@ export default function WalletActivityScreen({token,colors:c,onBack}:{token:stri
         const statusColor=successful?p.primary:pending?p.warning:p.danger;
         return <View key={row.id} style={s.card}>
           <View style={s.cardTop}><View style={[s.transactionIcon,{backgroundColor:successful?p.primarySoft:pending?p.accentSoft:p.accentSoft}]}><Ionicons name={successful?'checkmark':pending?'time-outline':'close'} size={18} color={statusColor}/></View><View style={s.copy}><Text numberOfLines={1} style={s.vendor}>{row.order.vendor.name}</Text><Text style={s.meta}>Order {row.order.id.slice(-8)} · {new Date(row.createdAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</Text></View><Text style={s.amount}>₦{(row.amountMinor/100).toLocaleString('en-NG')}</Text></View>
-          <View style={s.cardBottom}><Text style={[s.status,{color:statusColor}]}>{status.replaceAll('_',' ')}</Text>{row.isDemo&&<Text style={s.demo}>DEMO · NO REAL CHARGE</Text>}</View>
+          <View style={s.cardBottom}><Text style={[s.status,{color:statusColor}]}>{status.replace(/_/g,' ')}</Text>{row.isDemo&&<Text style={s.demo}>DEMO · NO REAL CHARGE</Text>}</View>
         </View>;
       })}
     </ScrollView>

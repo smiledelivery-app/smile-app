@@ -194,8 +194,21 @@ model Vendor {
   owner User @relation(fields:[ownerId], references:[id])
   products Product[]
   orders Order[]
+  operatingHours VendorOperatingHour[]
   @@index([status,isOpen])
   @@index([geocodedAt])
+}
+
+model VendorOperatingHour {
+  id String @id @default(cuid())
+  vendorId String
+  dayOfWeek Int
+  isClosed Boolean @default(false)
+  openingTime String?
+  closingTime String?
+  vendor Vendor @relation(fields:[vendorId], references:[id], onDelete:Cascade)
+  @@unique([vendorId,dayOfWeek])
+  @@index([vendorId])
 }
 
 model Product {
@@ -229,6 +242,7 @@ model ProductAddon {
 
 model Order {
   id String @id @default(cuid())
+  displayNumber Int @unique @default(autoincrement())
   customerId String
   vendorId String
   status OrderStatus @default(PENDING_PAYMENT)

@@ -1,5 +1,5 @@
 import {
-  ArrowRight, Bike, Bell, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight,
+  ArrowDownLeft, ArrowRight, ArrowUpRight, Bike, Bell, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight,
   CircleAlert, CircleCheckBig, CircleHelp, CircleUserRound, Clock3, CreditCard,
   Eye, EyeOff, House, Info, Languages, LockKeyhole, LogIn, LogOut,
   Mail, Map, MapPin, Moon, Navigation, Pencil, Phone, Plus, ReceiptText,
@@ -10,6 +10,7 @@ import {
 type Props={name:string;size?:number;color?:string;strokeWidth?:number};
 const icons:Record<string,LucideIcon>={
   add:Plus,'arrow-forward':ArrowRight,'chevron-back':ChevronLeft,'chevron-forward':ChevronRight,'chevron-down':ChevronDown,
+  'arrow-down-left':ArrowDownLeft,'arrow-up-right':ArrowUpRight,
   close:X,'create-outline':Pencil,'bicycle-outline':Bike,'storefront-outline':Store,'home-outline':House,
   'moon-outline':Moon,'sunny-outline':Sun,'person-outline':CircleUserRound,'receipt-outline':ReceiptText,
   'cube-outline':Boxes,'flash-outline':Zap,'map-outline':Map,'image-outline':ImagePlus,'navigate-outline':Navigation,

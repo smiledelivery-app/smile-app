@@ -31,6 +31,7 @@ import {
   Eye,
   EyeOff,
   Languages,
+  Landmark,
   LogOut,
   LogIn,
   LockKeyhole,
@@ -53,6 +54,8 @@ import {
   Sun,
   Trash2,
   TriangleAlert,
+  TrendingDown,
+  TrendingUp,
   Utensils,
   WalletCards,
   X,
@@ -74,6 +77,8 @@ const icons:Record<string,LucideIcon>={
   'lock-closed-outline':LockKeyhole,'settings-outline':Settings,'help-circle-outline':CircleHelp,
   'home-outline':House,'apps-outline':Grid2X2,'medkit-outline':Pill,'basket-outline':ShoppingBasket,'account-outline':UserRound,'clipboard-list-outline':ClipboardList,'card-outline':CreditCard,
   'bag-check-outline':BadgeCheck,'storefront-outline':Store,
+  'business-outline':Landmark,
+  'trending-up':TrendingUp,'trending-down':TrendingDown,
 };
 
 export function AppIcon({name,size=24,color,strokeWidth=2.2}:IconProps){const Icon=icons[name]??CircleDot;return <Icon size={size} color={color} strokeWidth={strokeWidth}/>;}
