@@ -16,7 +16,7 @@ import DeliveryMap from '../rider/DeliveryMap';
 import { Ionicons } from '../components/AppIcon';
 import OperationsNotificationsScreen, { type OperationsNotification } from './OperationsNotificationsScreen';
 
-type RiderApplicationDraft={dateOfBirth:string;nin:string;ninDocumentPublicId:string;ninDocumentVersion:string;ninDocumentName:string;plateNumber:string;residentialAddress:string;guarantorName:string;guarantorNin:string;guarantorAddress:string;accountNumber:string;bankCode:string};
+type RiderApplicationDraft={dateOfBirth:string;nin:string;ninDocumentPublicId:string;ninDocumentVersion:string;ninDocumentName:string;profileImagePublicId:string;profileImageUrl:string;plateNumber:string;residentialAddress:string;guarantorName:string;guarantorNin:string;guarantorAddress:string;accountNumber:string;bankCode:string};
 type Props = {
   token: string; user: import('@makanza/mobile-core').Session['user']; name: string; authorized: boolean; profile: RiderProfile | null; offers: RiderOffer[]; deliveries: RiderDelivery[];
   notifications:OperationsNotification[];unreadNotifications:number;notificationsLoading:boolean;notificationsError:string;notificationsOpenSignal:number;
@@ -42,7 +42,7 @@ export default function RiderWorkspace(p: Props) {
   const [notificationsOpen,setNotificationsOpen]=useState(false);
   const [orderView, setOrderView] = useState<'new' | 'ongoing'>('new');
   const [previewAvailable,setPreviewAvailable]=useState(false);
-  const c = p.colors; const s = styles(c);
+  const c = p.colors; const s = styles(c);const dashboard=dashboardStyles(c);
   useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(notificationsOpen){setNotificationsOpen(false);return true;}const previous=tabHistory.current.pop();if(previous){setTab(previous);return true;}return false;});return()=>subscription.remove();},[notificationsOpen]);
   useEffect(()=>{if(p.notificationsOpenSignal>0)setNotificationsOpen(true);},[p.notificationsOpenSignal]);
   const approved = p.profile?.status === 'APPROVED';
@@ -53,19 +53,76 @@ export default function RiderWorkspace(p: Props) {
   const orderPanelEmpty=orderView==='new'?(!approved||!p.profile?.available||!p.offers.length):active.length===0;
   const renderNewOrders=()=>approved&&p.profile?.available&&p.offers.length?p.offers.map(offer=><OfferCard key={offer.id} offer={offer} busy={p.busy===offer.id} dark={c.isDark} onAccept={p.onAccept} onReject={p.onReject}/>):<MotorbikeEmpty message="No new orders" c={c}/>;
   return <View style={s.flex}>
-    {tab==='home'&&<View style={s.homeHeader}><View style={s.greeting}><Text style={s.greetingEyebrow}>RIDER HOME</Text><Text style={s.greetingTitle}>Hi, {p.name.trim().split(/\s+/)[0]||'Rider'}</Text><Text style={s.greetingCopy}>{p.profile?.serviceArea??'Ready for your next delivery?'}</Text></View><View style={s.homeActions}><Pressable accessibilityRole="button" accessibilityLabel={`Notifications, ${p.unreadNotifications} unread`} onPress={()=>setNotificationsOpen(true)} style={s.iconButton}><Ionicons name="notifications-outline" size={21} color={c.ink}/>{p.unreadNotifications>0&&<View style={{position:'absolute',top:4,right:4,width:8,height:8,borderRadius:4,backgroundColor:'#d66b45'}}/>}</Pressable><View style={s.switchWrap}><Text style={s.presenceLabel}>{online?'Online':'Offline'}</Text><Switch accessibilityLabel="Rider availability" value={online} disabled={approved&&(active.length>0||p.busy==='availability')} onValueChange={value=>approved?p.onAvailability(value):setPreviewAvailable(value)} trackColor={{false:c.line,true:c.green}} thumbColor={c.paper} ios_backgroundColor={c.line}/></View></View></View>}
+    {tab==='home'&&<RiderHomeHeader name={p.name} online={online} disabled={approved&&(active.length>0||p.busy==='availability')} unreadCount={p.unreadNotifications} colors={c} onNotifications={()=>setNotificationsOpen(true)} onTheme={p.onTheme} onAvailability={()=>approved?p.onAvailability(!online):setPreviewAvailable(value=>!value)}/>}
     {tab==='offers'&&<View style={s.fixedHeading}><Heading eyebrow="DELIVERY OPPORTUNITIES" title="Offers" body="Offers sent to eligible riders nearby." c={c}/></View>}
     <View style={s.flex}>
       {tab==='home'&&<ScrollView contentContainerStyle={s.homeContent}>
-        <View style={s.orderSwitcher} accessibilityRole="tablist"><Pressable accessibilityRole="tab" accessibilityState={{selected:orderView==='new'}} onPress={()=>setOrderView('new')} style={[s.orderTab,orderView==='new'&&s.orderTabActive]}><Text style={[s.orderTabText,orderView==='new'&&s.orderTabTextActive]}>New orders</Text></Pressable><Pressable accessibilityRole="tab" accessibilityState={{selected:orderView==='ongoing'}} onPress={()=>setOrderView('ongoing')} style={[s.orderTab,orderView==='ongoing'&&s.orderTabActive]}><Text style={[s.orderTabText,orderView==='ongoing'&&s.orderTabTextActive]}>Ongoing orders</Text></Pressable></View>
+        <RiderDashboardSnapshot activeCount={active.length} offerCount={p.offers.length} deliveryCount={p.deliveries.length} loading={p.loading} onRefresh={p.onReload} colors={c}/>
+        <View style={[s.orderSwitcher,dashboard.orderSwitcher]} accessibilityRole="tablist"><Pressable accessibilityRole="tab" accessibilityState={{selected:orderView==='new'}} onPress={()=>setOrderView('new')} style={[s.orderTab,dashboard.orderTab,orderView==='new'&&dashboard.orderTabActive]}><Text style={[s.orderTabText,dashboard.orderTabText,orderView==='new'&&dashboard.orderTabTextActive]}>New orders</Text></Pressable><Pressable accessibilityRole="tab" accessibilityState={{selected:orderView==='ongoing'}} onPress={()=>setOrderView('ongoing')} style={[s.orderTab,dashboard.orderTab,orderView==='ongoing'&&dashboard.orderTabActive]}><Text style={[s.orderTabText,dashboard.orderTabText,orderView==='ongoing'&&dashboard.orderTabTextActive]}>Ongoing orders</Text></Pressable></View>
         {orderView==='new'?<View style={[s.orderPanel,orderPanelEmpty&&s.emptyOrderPanel]}>{approved&&p.loading?<ActivityIndicator style={s.orderLoader} color={c.green}/>:approved&&p.error?<OrderSectionNote text={p.error} c={c} error/>:!online?<MotorbikeEmpty message="No new orders" c={c}/>:renderNewOrders()}</View>:<View style={[s.orderPanel,orderPanelEmpty&&s.emptyOrderPanel]}>{approved&&p.loading&&!p.deliveries.length?<ActivityIndicator style={s.orderLoader} color={c.green}/>:approved&&p.error?<OrderSectionNote text={p.error} c={c} error/>:active.length?active.map(delivery=><OngoingOrderCard key={delivery.id} delivery={delivery} token={p.token} colors={c} busy={p.busy===delivery.id} completionCode={p.completionCodes[delivery.id]??''} onCompletionCode={value=>p.onCode(delivery.id,value.replace(/\D/g,'').slice(0,6))} onComplete={()=>p.onComplete(delivery)} onRefresh={p.onReload} onCancel={(reason,details)=>p.onCancel(delivery.id,reason,details)}/>):<MotorbikeEmpty message="No ongoing order" c={c}/>}</View>}
       </ScrollView>}
       {tab==='offers'&&<ScrollView contentContainerStyle={s.content}>{!online?<Empty title="You're offline" body="Go online to receive available offers." c={c}/>:approved&&p.loading?<ActivityIndicator style={s.loader} color={c.green}/>:approved&&p.error?<Empty title="Offers unavailable" body={p.error} c={c}/>:approved&&p.offers.length?p.offers.map(offer=><OfferCard key={offer.id} offer={offer} busy={p.busy===offer.id} dark={c.isDark} onAccept={p.onAccept} onReject={p.onReject}/>):<Empty title="No new orders" body="New delivery offers will appear here when available." c={c}/>}</ScrollView>}
       {tab==='deliveries'&&<RiderDeliverySummary deliveries={approved?p.deliveries:[]} loading={approved&&p.loading} error={approved?p.error:''} colors={c} onRetry={p.onReload}/>}
       {tab==='wallet'&&<RiderWalletScreen token={p.token} colors={c}/>}
-      {tab==='account'&&<RiderProfileScreen token={p.token} user={p.user} colors={c} dark={c.isDark} busy={p.busy} autoRefresh={p.autoRefresh} newsletter={p.newsletter} status={status} vehicleType={p.vehicleType} serviceArea={p.serviceArea} termsAccepted={p.termsAccepted} riderApplication={p.riderApplication} onRiderApplicationChange={p.onRiderApplicationChange} locationSharing={p.locationSharing} onTheme={p.onTheme} onAutoRefresh={p.onAutoRefresh} onNewsletter={p.onNewsletter} onSignOut={p.onSignOut} onVehicle={p.onVehicle} onArea={p.onArea} onTerms={p.onTerms} onApply={p.onApply} onProfileSaved={p.onProfileSaved}/>}
+      {tab==='account'&&<RiderProfileScreen token={p.token} user={p.user} colors={c} dark={c.isDark} busy={p.busy} autoRefresh={p.autoRefresh} newsletter={p.newsletter} status={status} profileImageUrl={p.profile?.profileImageUrl} vehicleType={p.vehicleType} serviceArea={p.serviceArea} termsAccepted={p.termsAccepted} riderApplication={p.riderApplication} onRiderApplicationChange={p.onRiderApplicationChange} locationSharing={p.locationSharing} onTheme={p.onTheme} onAutoRefresh={p.onAutoRefresh} onNewsletter={p.onNewsletter} onSignOut={p.onSignOut} onVehicle={p.onVehicle} onArea={p.onArea} onTerms={p.onTerms} onApply={p.onApply} onProfileSaved={p.onProfileSaved}/>}
     </View>
     <RoleTabBar role="RIDER" active={tab} onSelect={value=>navigateToTab(value as RiderTab)} colors={c}/>
+  </View>;
+}
+
+function RiderHomeHeader({name,online,disabled,unreadCount,colors,onNotifications,onTheme,onAvailability}:{name:string;online:boolean;disabled:boolean;unreadCount:number;colors:AppColors;onNotifications:()=>void;onTheme:()=>void;onAvailability:()=>void}){
+  const s=dashboardStyles(colors);
+  const firstName=name.trim().split(/\s+/)[0]||'Rider';
+  return <View style={s.homeHeader}>
+    <View style={s.homeHeaderTop}>
+      <View style={s.riderMark}><Ionicons name="bicycle-outline" size={22} color={colors.green}/></View>
+      <View style={s.greeting}>
+        <Text style={s.greetingEyebrow}>RIDER DASHBOARD</Text>
+        <Text numberOfLines={1} style={s.greetingTitle}>Hi, {firstName}</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Notifications, ${unreadCount} unread`} onPress={onNotifications} style={s.iconButton}>
+        <Ionicons name="notifications-outline" size={20} color={colors.ink}/>
+        {unreadCount>0&&<View style={s.unreadDot}/>}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={colors.isDark?'Switch to light mode':'Switch to dark mode'} onPress={onTheme} style={s.iconButton}>
+        <Ionicons name={colors.isDark?'sunny-outline':'moon-outline'} size={19} color={colors.ink}/>
+      </Pressable>
+    </View>
+    <View style={s.homeHeaderBottom}>
+      <View style={s.liveCopy}>
+        <Text style={s.liveTitle}>Go live</Text>
+        <Text style={s.liveDescription}>{online?'You are available for delivery orders':'Turn on to receive delivery orders'}</Text>
+      </View>
+      <Text style={[s.liveState,online&&s.liveStateOn]}>{online?'LIVE':'OFFLINE'}</Text>
+      <Switch
+        accessibilityLabel="Go live"
+        value={online}
+        disabled={disabled}
+        onValueChange={onAvailability}
+        trackColor={{false:colors.line,true:colors.green}}
+        thumbColor={colors.paper}
+      />
+    </View>
+  </View>;
+}
+
+function RiderDashboardSnapshot({activeCount,offerCount,deliveryCount,loading,onRefresh,colors}:{activeCount:number;offerCount:number;deliveryCount:number;loading:boolean;onRefresh:()=>void;colors:AppColors}){
+  const s=dashboardStyles(colors);
+  return <View style={s.snapshot}>
+    <View style={s.snapshotHeading}>
+      <View style={s.snapshotCopy}>
+        <Text style={s.snapshotEyebrow}>DELIVERY SNAPSHOT</Text>
+        <Text style={s.snapshotTitle}>Your shift at a glance</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Refresh rider dashboard" disabled={loading} onPress={onRefresh} style={s.refreshButton}>
+        {loading?<ActivityIndicator size="small" color={colors.green}/>:<Ionicons name="refresh-outline" size={18} color={colors.green}/>}
+      </Pressable>
+    </View>
+    <View style={s.quickStats}>
+      <QuickStat label="ACTIVE" value={activeCount} c={colors}/>
+      <QuickStat label="OFFERS" value={offerCount} c={colors}/>
+      <QuickStat label="DELIVERIES" value={deliveryCount} c={colors}/>
+    </View>
   </View>;
 }
 
@@ -96,11 +153,44 @@ function Heading({ eyebrow, title, body, c }: { eyebrow: string; title: string; 
 function Empty({ title, body, c }: { title: string; body: string; c: AppColors }) { const value=title.toLowerCase();const icon=value.includes('unavailable')?'alert-circle-outline':value.includes('offline')?'cloud-offline-outline':value.includes('approval')||value.includes('access required')?'time-outline':value.includes('delivery')?'bicycle-outline':'file-tray-outline';return <View style={{ padding:20,borderRadius:0,backgroundColor:c.card,borderWidth:0,borderBottomWidth:1,borderBottomColor:c.line,alignItems:'center',marginTop:10 }}><View style={{width:54,height:54,borderRadius:0,backgroundColor:c.cream,alignItems:'center',justifyContent:'center',marginBottom:11}}><Ionicons name={icon} size={27} color={c.green}/></View><Text style={{ color:c.ink,fontWeight:'900',fontSize:16,textAlign:'center' }}>{title}</Text><Text style={{ color:c.muted,fontSize:12,lineHeight:19,marginTop:5,textAlign:'center' }}>{body}</Text></View>; }
 function Info({ label, value, c }: { label: string; value: string; c: AppColors }) { return <View style={{ paddingVertical: 9, borderBottomWidth: 1, borderColor: c.line }}><Text style={{ color: c.muted, fontSize: 11 }}>{label}</Text><Text style={{ color: c.ink, fontSize: 15, fontWeight: '700', marginTop: 3 }}>{value}</Text></View>; }
 function QuickStat({ label, value, c }: { label: string; value: number; c: AppColors }) {
-  const icon = label === 'ACTIVE' ? 'bicycle-outline' : label === 'OFFERS' ? 'flash-outline' : 'map-outline';
-  return <View style={{ flex: 1, minHeight: 84, alignItems: 'center', justifyContent: 'center', gap: 4, padding: 8, borderRadius:0, borderWidth: 1, borderColor: c.line, backgroundColor: c.card }}>
-    <Ionicons name={icon} size={18} color={c.green}/>
-    <Text style={{ color: c.ink, fontSize: 21, fontWeight: '900' }}>{value}</Text>
-    <Text style={{ color: c.muted, fontSize: 9, fontWeight: '900', letterSpacing: .7 }}>{label}</Text>
+  const s=dashboardStyles(c);
+  const icon=label==='ACTIVE'?'bicycle-outline':label==='OFFERS'?'flash-outline':'receipt-outline';
+  return <View style={s.quickStat}>
+    <View style={s.quickStatIcon}><Ionicons name={icon} size={16} color={c.green}/></View>
+    <Text style={s.quickStatValue}>{value}</Text>
+    <Text style={s.quickStatLabel}>{label}</Text>
   </View>;
 }
+const dashboardStyles=(c:AppColors)=>StyleSheet.create({
+  homeHeader:{paddingHorizontal:16,paddingTop:10,paddingBottom:12,gap:11,backgroundColor:c.paper,borderBottomWidth:1,borderBottomColor:c.line},
+  homeHeaderTop:{flexDirection:'row',alignItems:'center',gap:10},
+  riderMark:{width:42,height:42,alignItems:'center',justifyContent:'center',borderRadius:14,backgroundColor:c.mint},
+  greeting:{flex:1,minWidth:0,gap:2},
+  greetingEyebrow:{color:c.green,fontSize:8,fontWeight:'900',letterSpacing:1.15},
+  greetingTitle:{color:c.ink,fontSize:20,fontWeight:'900',letterSpacing:-.3},
+  iconButton:{position:'relative',width:42,height:42,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:c.line,borderRadius:14,backgroundColor:c.card},
+  unreadDot:{position:'absolute',top:7,right:7,width:8,height:8,borderRadius:4,borderWidth:1.5,borderColor:c.card,backgroundColor:'#d66b45'},
+  homeHeaderBottom:{minHeight:62,flexDirection:'row',alignItems:'center',gap:11,paddingHorizontal:13,borderWidth:1,borderColor:c.line,borderRadius:16,backgroundColor:c.card},
+  liveCopy:{flex:1,minWidth:0,gap:3},
+  liveTitle:{color:c.ink,fontSize:12,fontWeight:'900'},
+  liveDescription:{color:c.muted,fontSize:10,fontWeight:'600'},
+  liveState:{color:c.muted,fontSize:8,fontWeight:'900',letterSpacing:.8},
+  liveStateOn:{color:c.green},
+  snapshot:{padding:14,borderWidth:1,borderColor:c.line,borderRadius:18,backgroundColor:c.card,gap:12},
+  snapshotHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:8},
+  snapshotCopy:{flex:1,gap:3},
+  snapshotEyebrow:{color:c.green,fontSize:8,fontWeight:'900',letterSpacing:1},
+  snapshotTitle:{color:c.ink,fontSize:14,fontWeight:'900'},
+  refreshButton:{width:36,height:36,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:c.line,borderRadius:12,backgroundColor:c.paper},
+  quickStats:{flexDirection:'row',gap:8},
+  quickStat:{flex:1,minWidth:0,minHeight:80,alignItems:'center',justifyContent:'center',gap:3,padding:7,borderRadius:14,backgroundColor:c.isDark?c.paper:'#f3f7f4'},
+  quickStatIcon:{width:26,height:26,alignItems:'center',justifyContent:'center',borderRadius:9,backgroundColor:c.mint},
+  quickStatValue:{color:c.ink,fontSize:19,fontWeight:'900'},
+  quickStatLabel:{color:c.muted,fontSize:7,fontWeight:'900',letterSpacing:.45},
+  orderSwitcher:{flexDirection:'row',alignItems:'center',gap:3,padding:4,borderWidth:1,borderColor:c.line,borderRadius:14,backgroundColor:c.isDark?c.paper:'#f1f5f2'},
+  orderTab:{flex:1,minHeight:40,alignItems:'center',justifyContent:'center',paddingHorizontal:5,borderRadius:11},
+  orderTabActive:{backgroundColor:c.card,borderWidth:1,borderColor:c.line,elevation:1},
+  orderTabText:{fontSize:11,fontWeight:'800',color:c.muted},
+  orderTabTextActive:{color:c.green},
+});
 const styles = (c: AppColors) => StyleSheet.create({ orderLoader: { margin: 20 }, orderSwitcher: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4, borderRadius:0, backgroundColor: c.cream }, orderTab: { flex: 1, alignItems: 'center', paddingVertical: 11, paddingHorizontal: 5, borderRadius:0}, orderTabActive: { backgroundColor: c.green }, orderTabText: { fontSize: 12, fontWeight: '800', color: c.muted }, orderTabTextActive: { color: 'white' }, orderPanel: { flex: 1, minHeight: 300, padding: 13, borderRadius:0, borderWidth: 0, borderColor: 'transparent', backgroundColor: c.card, borderBottomWidth: 1, borderBottomColor: c.line, gap: 10 }, emptyOrderPanel: { padding: 0, borderWidth: 0, borderRadius:0, backgroundColor: "transparent" }, switchWrap: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, borderRadius:0, backgroundColor: c.cream }, activeOrder: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 11, borderRadius:0, backgroundColor: c.isDark ? '#19271f' : '#f7f9f5', borderBottomWidth: 1, borderBottomColor: c.line }, activeOrderIcon: { width: 40, height: 40, borderRadius:0, alignItems: 'center', justifyContent: 'center', backgroundColor: c.cream }, activeOrderCopy: { flex: 1 }, activeOrderTitle: { color: c.ink, fontSize: 13, fontWeight: '900' }, activeOrderMeta: { color: c.muted, fontSize: 11, marginTop: 3 }, homeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 15, paddingVertical: 3 }, greeting: { flex: 1 }, greetingEyebrow: { color: c.green, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 }, greetingTitle: { color: c.ink, fontSize: 25, fontWeight: '900', marginTop: 3 }, greetingCopy: { color: c.muted, fontSize: 11, marginTop: 2 }, homeActions: { flexDirection: 'row', alignItems: 'center', gap: 7 }, iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: c.card, borderWidth: 1, borderColor: c.line }, presenceToggle: { minWidth: 86, height: 40, borderRadius:0, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: c.cream, borderWidth: 1, borderColor: c.line }, presenceToggleOn: { backgroundColor: c.green, borderColor: c.green }, presenceToggleDisabled: { opacity: 0.55 }, presenceDot: { width: 8, height: 8, borderRadius:0, backgroundColor: c.muted }, presenceDotOn: { backgroundColor: c.lime }, presenceLabel: { color: c.ink, fontSize: 12, fontWeight: '800' }, presenceLabelOn: { color: 'white' }, flex: { flex: 1 }, content: { padding: 16, gap: 12, paddingBottom: 24 }, homeContent: { flexGrow: 1, paddingHorizontal: 15, paddingTop: 13, gap: 12, paddingBottom: 24 }, fixedHeading: { paddingHorizontal: 13, paddingTop: 12, paddingBottom: 4, backgroundColor: c.paper }, contentWide: { paddingHorizontal: 0, paddingTop: 0 }, hero: { minHeight: 150, padding: 19, borderRadius:0, backgroundColor: c.isDark ? '#194c3a' : c.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, heroCopy: { flex: 1 }, eyebrow: { color: c.lime, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 }, heroTitle: { color: 'white', fontSize: 29, fontWeight: '900', marginTop: 8 }, heroLead: { color: '#e4ebdc', fontSize: 12, marginTop: 6 }, orbit: { width: 62, height: 62, borderRadius:0, backgroundColor: 'rgba(213,239,129,.17)', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }, orbitIcon: { color: c.lime, fontSize: 38, fontWeight: '900' }, card: {padding: 15,gap: 9,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line}, cardTitle: { color: c.ink, fontSize: 16, fontWeight: '900' }, copy: { color: c.muted, fontSize: 12, lineHeight: 19 }, row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pill: { paddingHorizontal: 9, paddingVertical: 6, borderRadius:0, backgroundColor: c.cream }, pillActive: { backgroundColor: c.isDark ? '#263923' : '#e9f3d7' }, pillText: { color: c.green, fontSize: 10, fontWeight: '900' }, button: { marginTop: 3 }, quickRow: { flexDirection: 'row', gap: 9 }, terms: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }, check: { color: c.green, fontSize: 24 }, detailTitle: { color: c.ink, fontSize: 15, fontWeight: '800' }, loader: { margin: 28 }, error: { color: '#a44232', fontSize: 12 }, notice: { color: c.green, fontSize: 12, paddingHorizontal: 2 } });

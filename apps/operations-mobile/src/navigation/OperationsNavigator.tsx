@@ -18,6 +18,13 @@ import VendorWorkspace from './VendorWorkspace';
 import RiderWorkspace from './RiderWorkspace';
 
 type WorkRole='VENDOR'|'RIDER';
+function resolveWorkspace(preferred:WorkRole|null,roles:string[]):WorkRole|null{
+  if(preferred)return preferred;
+  const vendor=roles.includes('VENDOR');
+  const rider=roles.includes('RIDER');
+  if(vendor===rider)return null;
+  return vendor?'VENDOR':'RIDER';
+}
 
 // expo-secure-store is native-only. Use browser storage for the web preview so
 // restoring preferences/session state never crashes the app before it renders.
@@ -37,6 +44,8 @@ export default function App(){
   const [riderAutoRefresh,setRiderAutoRefresh]=useState(true);const [riderNewsletter,setRiderNewsletter]=useState(false);
   const [onboardingReady,setOnboardingReady]=useState(false);
   const [authReady,setAuthReady]=useState(false);
+  const [restoreError,setRestoreError]=useState('');
+  const [restoreAttempt,setRestoreAttempt]=useState(0);
   const [preferencesReady,setPreferencesReady]=useState(false);
   const [hasOnboarded,setHasOnboarded]=useState(false);
   const [selectedRole,setSelectedRole]=useState<WorkRole|null>(null);
@@ -54,7 +63,7 @@ export default function App(){
   const [deliveries,setDeliveries]=useState<RiderDelivery[]>([]);
   const [email,setEmail]=useState('');const [password,setPassword]=useState('');
   const [vehicleType,setVehicleType]=useState('');const [serviceArea,setServiceArea]=useState('');const [termsAccepted,setTermsAccepted]=useState(false);
-  const [riderApplication,setRiderApplication]=useState({dateOfBirth:'',nin:'',ninDocumentPublicId:'',ninDocumentVersion:'',ninDocumentName:'',plateNumber:'',residentialAddress:'',guarantorName:'',guarantorNin:'',guarantorAddress:'',accountNumber:'',bankCode:''});
+  const [riderApplication,setRiderApplication]=useState({dateOfBirth:'',nin:'',ninDocumentPublicId:'',ninDocumentVersion:'',ninDocumentName:'',profileImagePublicId:'',profileImageUrl:'',plateNumber:'',residentialAddress:'',guarantorName:'',guarantorNin:'',guarantorAddress:'',accountNumber:'',bankCode:''});
   const [completionCodes,setCompletionCodes]=useState<Record<string,string>>({});
   const [loading,setLoading]=useState(false);const [busy,setBusy]=useState('');const [error,setError]=useState('');const [notice,setNotice]=useState('');const [locationMessage,setLocationMessage]=useState('');
   const [locationSharing,setLocationSharing]=useState(false);
@@ -141,6 +150,8 @@ export default function App(){
   },[]);
 
   useEffect(()=>{
+    setAuthReady(false);
+    setRestoreError('');
     let active=true;
     void (async()=>{
       let savedSession:Session|null=null;
@@ -150,28 +161,28 @@ export default function App(){
         if(storedRole==='VENDOR'||storedRole==='RIDER')preferredRole=storedRole;
         if(active&&preferredRole)setSelectedRole(preferredRole);
         if(!saved)return;
-        try{const parsed=JSON.parse(saved) as Session;if(!parsed?.token||!parsed.user?.roles)throw new Error('Saved account data is incomplete.');savedSession=parsed;if(!preferredRole)preferredRole=parsed.user.roles.includes('VENDOR')?'VENDOR':parsed.user.roles.includes('RIDER')?'RIDER':null;if(active&&preferredRole)setSelectedRole(preferredRole);}
+        try{const parsed=JSON.parse(saved) as Session;if(!parsed?.token||!parsed.user?.roles)throw new Error('Saved account data is incomplete.');savedSession=parsed;if(!preferredRole)preferredRole=resolveWorkspace(null,parsed.user.roles);if(active&&preferredRole)setSelectedRole(preferredRole);}
         catch{await removeStorage('makanza-ops-session');if(active)setError('Saved account data was not valid. Sign in again.');return;}
         if(!savedSession)return;
         try{
           const identity=await api.get<{userId:string;roles:string[];isDemo:boolean}>('/auth/me',savedSession.token);
           if(!active)return;
           const roles=identity.roles;
-          const selected=preferredRole&&roles.includes(preferredRole)?preferredRole:roles.includes('VENDOR')?'VENDOR':roles.includes('RIDER')?'RIDER':null;
+          const selected=resolveWorkspace(preferredRole,roles);
           const restored={...savedSession,user:{...savedSession.user,roles,isDemo:identity.isDemo}};
           setSession(restored);setSelectedRole(selected);setRole(selected);
           if(selected)await writeStorage('makanza-operations-work-role-v1',selected).catch(()=>undefined);
-          if(selected==='VENDOR')await loadVendorOrders(savedSession.token);
-          if(selected==='RIDER')await loadRiderData(savedSession.token);
+          if(selected==='VENDOR'&&roles.includes('VENDOR'))await loadVendorOrders(savedSession.token);
+          if(selected==='RIDER'&&roles.includes('RIDER'))await loadRiderData(savedSession.token);
         }catch(error){
           if(error instanceof ApiError&&error.status===401){await removeStorage('makanza-ops-session');if(active){setSession(null);setRole(null);setSelectedRole(preferredRole);}}
-          else if(active&&savedSession){const roles=savedSession.user.roles;const selected=preferredRole&&roles.includes(preferredRole)?preferredRole:roles.includes('VENDOR')?'VENDOR':roles.includes('RIDER')?'RIDER':null;setSession(savedSession);setSelectedRole(selected);setRole(selected);setError(error instanceof Error?error.message:'Could not validate your saved account.');}
+          else if(active&&savedSession)setRestoreError(error instanceof Error?`Could not verify your saved account. ${error.message}`:'Could not verify your saved account.');
         }
-      }catch(error){if(active)setError(error instanceof Error?error.message:'Could not restore saved app data.');}
+      }catch(error){if(active)setRestoreError(error instanceof Error?`Could not restore saved app data. ${error.message}`:'Could not restore saved app data.');}
       finally{if(active)setAuthReady(true);}
     })();
     return()=>{active=false;};
-  },[loadRiderData,loadVendorOrders]);
+  },[loadRiderData,loadVendorOrders,restoreAttempt]);
 
   // Location updates are foreground only. Going to the background stops the watcher;
   // an online rider is also marked offline until they explicitly resume in the app.
@@ -250,7 +261,7 @@ export default function App(){
       const profile=await api.post<{id:string;status:string;available:boolean}>('/rider/onboarding',{vehicleType,serviceArea,...riderApplication,ninDocumentVersion:Number(riderApplication.ninDocumentVersion),termsAccepted:true},token);
       const updated={...session!,user:{...session!.user,roles:Array.from(new Set([...session!.user.roles,'RIDER']))}};
       await writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);
-      setRiderProfile({...profile,vehicleType,serviceArea,location:null});setOffers([]);setDeliveries([]);setNotice('Your application was submitted for review.');
+      setRiderProfile({...profile,vehicleType,serviceArea,profileImageUrl:riderApplication.profileImageUrl||null,location:null});setOffers([]);setDeliveries([]);setNotice('Your application was submitted for review.');
     }catch(e){setError(e instanceof Error?e.message:'Could not submit the rider application.');}
     finally{setBusy('');}
   };
@@ -327,18 +338,18 @@ export default function App(){
   const finishOnboarding=async(nextRole?:WorkRole)=>{setHasOnboarded(true);setOnboardingReady(true);await writeStorage('makanza-operations-onboarding-v2','complete').catch(()=>undefined);if(nextRole)switchRole(nextRole);};
   const changeRole=()=>{setSelectedRole(null);setRole(null);setError('');void removeStorage('makanza-operations-work-role-v1').catch(()=>undefined);};
   if(!onboardingReady||!authReady||!preferencesReady)return <FontSplashScreen/>;
+  if(restoreError)return <FontSplashScreen message={restoreError} actionLabel="Retry" onAction={()=>setRestoreAttempt(value=>value+1)}/>;
   if(!hasOnboarded)return <OnboardingScreen dark={isDark} onTheme={toggleTheme} onComplete={()=>void finishOnboarding()} onSelectRole={next=>void finishOnboarding(next)}/>;
   if(!session&&!selectedRole)return <RoleChoiceScreen dark={isDark} onTheme={toggleTheme} onSelectRole={switchRole}/>;
   if(session&&role===null)return <RoleChoiceScreen dark={isDark} signedIn onTheme={toggleTheme} onSelectRole={selectSessionWorkspace}/>;
   if(!session&&selectedRole)return <SignInScreen role={selectedRole} dark={isDark} email={email} password={password} busy={busy} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={()=>void signIn()} onSignup={beginSignup} onVerify={(phone,code)=>void verifySignup(phone,code)} onResend={resendSignup} onChangeRole={changeRole} onTheme={toggleTheme}/>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle={isDark?'light-content':'dark-content'} backgroundColor={c.paper} translucent={false}/>
-    {role!=='RIDER'&&(role!=='VENDOR'||vendorOnIndex)&&<View style={[s.header,role==='VENDOR'&&{height:60,paddingHorizontal:18,backgroundColor:c.paper,borderBottomWidth:1,borderBottomColor:c.line}]}>
-      {role==='VENDOR'&&vendorOnIndex?<View style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={[s.storeHeaderName,{fontSize:16,marginRight:8}]}>{vendorStoreName||'Vendor workspace'}</Text><Text style={{fontSize:8,fontWeight:'900',letterSpacing:1,color:c.muted,marginTop:2}}>SMILE VENDOR</Text></View>:<View style={{flexDirection:'row',alignItems:'center',gap:7}}><Image accessibilityLabel="Smile logo" source={require('../../assets/logo-transparent.png')} resizeMode="contain" style={{width:38,height:38}}/><Text style={s.ops}>OPS</Text></View>}
+    {role==='VENDOR'&&vendorOnIndex?<VendorStickyHeader storeName={vendorStoreName} unreadCount={notificationInbox.unreadCount} isDark={isDark} colors={c} onNotifications={()=>{setVendorNotificationsOpen(true);if(token)void loadNotifications(token);}} onToggleTheme={toggleTheme}/>:role!=='RIDER'&&role!=='VENDOR'&&<View style={s.header}>
+      <View style={{flexDirection:'row',alignItems:'center',gap:7}}><Image accessibilityLabel="Smile logo" source={require('../../assets/logo-transparent.png')} resizeMode="contain" style={{width:38,height:38}}/><Text style={s.ops}>OPS</Text></View>
       <View style={s.headerActions}>
-        {role==='VENDOR'&&<Pressable accessibilityRole="button" accessibilityLabel={`Vendor notifications, ${notificationInbox.unreadCount} unread`} onPress={()=>{setVendorNotificationsOpen(true);if(token)void loadNotifications(token);}} style={{width:40,height:40,alignItems:'center',justifyContent:'center',borderRadius:13,backgroundColor:c.card,borderWidth:1,borderColor:c.line}}><Ionicons name="notifications-outline" size={20} color={c.green}/>{notificationInbox.unreadCount>0&&<View style={{position:'absolute',top:7,right:7,width:8,height:8,borderRadius:4,backgroundColor:'#d66b45'}}/>}</Pressable>}
-        <Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={[s.themeToggle,role==='VENDOR'&&{width:40,height:40,paddingHorizontal:0,paddingVertical:0,alignItems:'center',justifyContent:'center',borderRadius:13,backgroundColor:c.card,borderWidth:1,borderColor:c.line}]}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={20} color={c.green}/></Pressable>
-        {session&&role!=='VENDOR'&&<Pressable accessibilityRole="button" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}
+        <Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={s.themeToggle}><Ionicons name={isDark?'sunny-outline':'moon-outline'} size={20} color={c.green}/></Pressable>
+        {session&&<Pressable accessibilityRole="button" onPress={()=>void signOut()}><Text style={s.signOut}>Sign out</Text></Pressable>}
       </View>
     </View>}
     {session&&<>
@@ -347,5 +358,39 @@ export default function App(){
     </>}
   </SafeAreaView>;
 }
+
+function VendorStickyHeader({storeName,unreadCount,isDark,colors,onNotifications,onToggleTheme}:{storeName:string;unreadCount:number;isDark:boolean;colors:AppColors;onNotifications:()=>void;onToggleTheme:()=>void}){
+  const s=vendorStickyStyles(colors);
+  return <View style={s.container}>
+    <View style={s.identity}>
+      <View style={s.storeMark}><Ionicons name="storefront-outline" size={21} color={colors.green}/></View>
+      <View style={s.storeCopy}>
+        <Text style={s.eyebrow}>SMILE VENDOR</Text>
+        <Text numberOfLines={1} style={s.storeName}>{storeName||'Vendor workspace'}</Text>
+      </View>
+    </View>
+    <View style={s.actions}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Vendor notifications, ${unreadCount} unread`} onPress={onNotifications} style={s.action}>
+        <Ionicons name="notifications-outline" size={20} color={colors.green}/>
+        {unreadCount>0&&<View style={s.unreadDot}/>}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={onToggleTheme} style={s.action}>
+        <Ionicons name={isDark?'sunny-outline':'moon-outline'} size={20} color={colors.green}/>
+      </Pressable>
+    </View>
+  </View>;
+}
+
+const vendorStickyStyles=(c:AppColors)=>StyleSheet.create({
+  container:{height:68,paddingHorizontal:16,flexDirection:'row',alignItems:'center',justifyContent:'space-between',backgroundColor:c.paper,borderBottomWidth:1,borderBottomColor:c.line,zIndex:10,elevation:2,shadowColor:c.isDark?'#000':'#173a2b',shadowOffset:{width:0,height:2},shadowOpacity:c.isDark?.22:.06,shadowRadius:8},
+  identity:{flex:1,minWidth:0,flexDirection:'row',alignItems:'center',gap:10},
+  storeMark:{width:42,height:42,alignItems:'center',justifyContent:'center',borderRadius:14,backgroundColor:c.mint},
+  storeCopy:{flex:1,minWidth:0,gap:2},
+  eyebrow:{fontSize:8,fontWeight:'900',letterSpacing:1.15,color:c.green},
+  storeName:{fontSize:15,fontWeight:'900',letterSpacing:-.2,color:c.ink},
+  actions:{flexDirection:'row',alignItems:'center',gap:8,marginLeft:10},
+  action:{position:'relative',width:42,height:42,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:c.line,borderRadius:14,backgroundColor:c.card},
+  unreadDot:{position:'absolute',top:7,right:7,width:8,height:8,borderRadius:4,borderWidth:1.5,borderColor:c.card,backgroundColor:'#d66b45'},
+});
 
 const createStyles=(c:AppColors)=>StyleSheet.create({safe:{flex:1,backgroundColor:c.paper},headerActions:{flexDirection:'row',alignItems:'center',gap:9},storeHeaderName:{flex:1,fontSize:18,fontWeight:'900',color:c.ink,marginRight:8},themeToggle:{paddingHorizontal:9,paddingVertical:7,borderRadius:0,backgroundColor:c.card},themeText:{fontSize:11,fontWeight:'800',color:c.green},flex:{flex:1},header:{height:62,paddingHorizontal:18,backgroundColor:c.cream,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},brand:{fontSize:23,fontWeight:'800',color:c.ink,letterSpacing:-.6},mark:{backgroundColor:c.green,color:c.lime,borderRadius:0,overflow:'hidden',paddingHorizontal:7,fontFamily:'serif'},ops:{fontSize:11,color:c.orange,letterSpacing:1.2},signOut:{fontSize:13,color:c.green,fontWeight:'700'},login:{padding:23,justifyContent:'center',flexGrow:1},eyebrow:{fontSize:11,letterSpacing:1.4,color:'#527452',fontWeight:'800',marginBottom:12},title:{fontSize:35,lineHeight:42,fontWeight:'700',letterSpacing:-1,color:c.ink},subtitle:{fontSize:15,lineHeight:22,color:c.muted,marginTop:8,marginBottom:15},label:{fontSize:13,color:c.ink,fontWeight:'700',marginTop:12,marginBottom:6},inputGroup:{marginTop:4},input:{height:45,borderColor:c.isDark?c.line:'#9aa99f',borderWidth:1,borderRadius:0,paddingHorizontal:12,backgroundColor:c.card,fontSize:15,color:c.ink},button:{minHeight:41,paddingHorizontal:14,borderRadius:0,backgroundColor:c.green,justifyContent:'center',alignItems:'center'},buttonText:{fontSize:13,fontWeight:'800',color:c.isDark?'#17231b':'white'},buttonSecondary:{backgroundColor:c.card,borderWidth:1,borderColor:c.line},buttonSecondaryText:{color:c.green},disabled:{opacity:.5},error:{fontSize:13,lineHeight:21,color:'#a44232',marginVertical:10},hero:{padding:20,backgroundColor:c.isDark?'#194c3a':c.green,borderBottomLeftRadius: 0,borderBottomRightRadius: 0},refresh:{backgroundColor:'rgba(255,255,255,.14)',paddingHorizontal:11,paddingVertical:8,borderRadius:0},refreshText:{fontSize:12,color:c.lime,fontWeight:'800'},vendorEyebrow:{fontSize:11,letterSpacing:1.4,color:'#d5ef81',fontWeight:'800',marginBottom:8},vendorHeroTitle:{fontSize:32,lineHeight:38,fontWeight:'800',letterSpacing:-1,color:'white'},vendorHeroSubtitle:{fontSize:13,lineHeight:19,color:'#e5ecdf',marginTop:8,marginBottom:14},metrics:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',backgroundColor:'rgba(255,255,255,.10)',paddingVertical:12,paddingHorizontal:10,borderRadius:0,marginTop:7},metric:{flex:1,alignItems:'center'},metricValue:{fontSize:24,fontWeight:'800',color:'white'},metricLabel:{fontSize:9,letterSpacing:.7,fontWeight:'800',color:'#d9e5d1',marginTop:2},metricDivider:{width:1,height:28,backgroundColor:'rgba(255,255,255,.2)'},switchLink:{fontSize:12,color:c.lime,fontWeight:'700',marginTop:13},roleSwitch:{height:48,flexDirection:'row',borderBottomWidth:1,borderBottomColor:c.line},roleTab:{flex:1,alignItems:'center',justifyContent:'center'},roleTabActive:{borderBottomWidth:2,borderBottomColor:c.green},roleTabText:{fontSize:15,color:c.muted},roleTabTextActive:{fontWeight:'700',color:c.green},state:{padding:20,alignItems:'center',justifyContent:'center',gap:8},stateTitle:{fontSize:17,fontWeight:'700',color:c.ink},list:{padding:13,gap:10},orderCard:{padding:14,gap:11,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10},orderId:{fontSize:15,fontWeight:'700',color:c.ink},status:{fontSize:11,color:c.green,backgroundColor:c.cream,paddingHorizontal:8,paddingVertical:5,borderRadius:0,textTransform:'capitalize'},items:{fontSize:13,lineHeight:21,color:c.muted},date:{fontSize:11,color:c.muted,flex:1},total:{fontSize:13,fontWeight:'700',color:c.green},actions:{flexDirection:'row',gap:8,justifyContent:'flex-end',marginTop:8},rider:{padding:16,gap:13,paddingBottom:30},riderHero:{minHeight:154,padding:19,borderRadius:0,backgroundColor:c.isDark?'#194c3a':c.green,flexDirection:'row',alignItems:'center',justifyContent:'space-between',overflow:'hidden'},riderEyebrow:{fontSize:11,letterSpacing:1.3,color:c.lime,fontWeight:'800',marginBottom:8},riderTitle:{fontSize:28,lineHeight:34,fontWeight:'800',letterSpacing:-.7,color:'white'},riderLead:{fontSize:12,color:'#e4ebdc',marginTop:7},riderOrbit:{width:70,height:70,borderRadius:0,backgroundColor:'rgba(213,239,129,.17)',alignItems:'center',justifyContent:'center',marginRight:2},riderOrbitIcon:{fontSize:43,color:c.lime,fontWeight:'700'},riderIntroRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:2},notice:{padding:16,borderRadius:0,backgroundColor:c.cream,borderWidth:1,borderColor:c.line},noticeTitle:{fontSize:17,fontWeight:'700',color:c.ink,marginBottom:7},muted:{fontSize:12,lineHeight:19,color:c.muted},terms:{flexDirection:'row',alignItems:'center',gap:9,marginTop:15},checkbox:{fontSize:24,color:c.green},termsText:{fontSize:13,color:c.ink,flex:1},riderSummary:{padding:15,borderRadius:0,borderWidth:0,borderColor:'transparent',backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,gap:10},onlinePill:{paddingHorizontal:9,paddingVertical:5,borderRadius:0,backgroundColor:'#f1f2ed'},onlinePillActive:{backgroundColor:'#e9f3d7'},onlineText:{fontSize:10,fontWeight:'800',color:c.muted},onlineTextActive:{color:c.green},locationText:{fontSize:11,color:c.muted},sectionTitle:{fontSize:17,fontWeight:'700',color:c.ink,marginVertical:5},deliveryCard:{padding:16,gap:10,marginTop:10,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},offerCard:{padding:16,gap:10,marginTop:10,borderWidth:0,borderColor:'transparent',borderRadius:0,backgroundColor:c.card,borderBottomWidth:1,borderBottomColor:c.line,shadowOpacity:0,elevation:0},offerExpires:{fontSize:11,color:'#9a6836'},empty:{padding:18,alignItems:'center',gap:6,backgroundColor:c.cream,borderRadius:0}});

@@ -383,6 +383,7 @@ model RiderProfile {
   ninCiphertext String?
   ninDocumentPublicId String?
   ninDocumentVersion Int?
+  profileImageUrl String?
   plateNumber String?
   residentialAddress String?
   guarantorName String?

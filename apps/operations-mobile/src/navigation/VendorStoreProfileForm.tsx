@@ -8,7 +8,7 @@ import FormField from '../components/FormField';
 import PrimaryButton from '../components/PrimaryButton';
 import { Ionicons } from '../components/AppIcon';
 import StoreMediaPicker from './StoreMediaPicker';
-import { appendMediaAsset, createUploadFormData } from '../utils/upload-media';
+import { uploadMediaAsset } from '../utils/upload-media';
 import { vendorRadius, vendorSpace } from '../theme/vendor';
 import VendorStoreLocationModal from './VendorStoreLocationModal';
 
@@ -16,13 +16,13 @@ export type OperatingHour={dayOfWeek:number;isClosed:boolean;openingTime:string|
 export type VendorProfile={id:string;name:string;ownerName:string;description:string;address:string;contactPhone:string|null;openingTime:string;closingTime:string;operatingHours?:OperatingHour[];logoUrl:string|null;coverImageUrl:string|null;cacNumber:string|null;cacDocumentUrl:string|null;latitude:number|string|null;longitude:number|string|null;status:string;isOpen:boolean};
 
 type UploadSignature={cloudName:string;apiKey:string;timestamp:number;folder:string;signature:string};
-type Props={token:string;profile:VendorProfile|null;authorized:boolean;colors:AppColors;onAuthorized:()=>void;onSaved:(profile:VendorProfile)=>void;onCancel?:()=>void};
+type Props={token:string;profile:VendorProfile|null;authorized:boolean;colors:AppColors;onAuthorized:()=>void;onSaved:(profile:VendorProfile)=>void;onCancel?:()=>void;cancelTitle?:string};
 type Form={name:string;ownerName:string;contactPhone:string;description:string;address:string;operatingHours:OperatingHour[];logoUrl:string;coverImageUrl:string;cacNumber:string;cacDocumentUrl:string;latitude:number|undefined;longitude:number|undefined;termsAccepted:boolean};
 const dayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const defaultHours=():OperatingHour[]=>dayNames.map((_,dayOfWeek)=>({dayOfWeek,isClosed:false,openingTime:'09:00',closingTime:'21:00'}));
 const emptyForm=():Form=>({name:'',ownerName:'',contactPhone:'',description:'',address:'',operatingHours:defaultHours(),logoUrl:'',coverImageUrl:'',cacNumber:'',cacDocumentUrl:'',latitude:undefined,longitude:undefined,termsAccepted:false});
 
-export function VendorStoreProfileForm({token,profile,authorized,colors,onAuthorized,onSaved,onCancel}:Props){
+export function VendorStoreProfileForm({token,profile,authorized,colors,onAuthorized,onSaved,onCancel,cancelTitle}:Props){
   const [form,setForm]=useState<Form>(emptyForm);const [busy,setBusy]=useState(false);const [mediaBusy,setMediaBusy]=useState<'logo'|'cover'|null>(null);const [error,setError]=useState('');const [locationOpen,setLocationOpen]=useState(false);const [hoursOpen,setHoursOpen]=useState(false);const [selectedDay,setSelectedDay]=useState(()=>new Date().getDay());const s=styles(colors);
   useEffect(()=>{if(profile){const oldHours=profile.operatingHours?.length===7?profile.operatingHours:null;setForm({name:profile.name,ownerName:profile.ownerName??'',contactPhone:profile.contactPhone??'',description:profile.description??'',address:profile.address??'',operatingHours:oldHours??dayNames.map((_,dayOfWeek)=>({dayOfWeek,isClosed:false,openingTime:profile.openingTime??'09:00',closingTime:profile.closingTime??'21:00'})),logoUrl:profile.logoUrl??'',coverImageUrl:profile.coverImageUrl??'',cacNumber:profile.cacNumber??'',cacDocumentUrl:profile.cacDocumentUrl??'',latitude:profile.latitude===null?undefined:Number(profile.latitude),longitude:profile.longitude===null?undefined:Number(profile.longitude),termsAccepted:false});}},[profile]);
   const set=<K extends keyof Form>(key:K,value:Form[K])=>setForm(current=>({...current,[key]:value}));
@@ -42,10 +42,7 @@ export function VendorStoreProfileForm({token,profile,authorized,colors,onAuthor
       const asset=result.assets[0];if(!asset)return;
       setMediaBusy(kind);
       const signature=await api.post<UploadSignature>('/vendor/media/sign',{},token);
-      const data=createUploadFormData();
-      await appendMediaAsset(data,asset,`${kind}-${Date.now()}.jpg`);
-      data.append('api_key',signature.apiKey);data.append('timestamp',String(signature.timestamp));data.append('folder',signature.folder);data.append('signature',signature.signature);
-      const response=await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(signature.cloudName)}/image/upload`,{method:'POST',body:data});
+      const response=await uploadMediaAsset(`https://api.cloudinary.com/v1_1/${encodeURIComponent(signature.cloudName)}/image/upload`,asset,`${kind}-${Date.now()}.jpg`,{api_key:signature.apiKey,timestamp:String(signature.timestamp),folder:signature.folder,signature:signature.signature});
       const uploaded=await response.json().catch(()=>null) as {secure_url?:string;error?:{message?:string}}|null;
       if(!response.ok||!uploaded?.secure_url)throw new Error(uploaded?.error?.message??'Could not upload this image. Try another photo.');
       set(kind==='logo'?'logoUrl':'coverImageUrl',uploaded.secure_url);
@@ -119,7 +116,7 @@ export function VendorStoreProfileForm({token,profile,authorized,colors,onAuthor
     {!authorized&&<Pressable accessibilityRole="checkbox" accessibilityState={{checked:form.termsAccepted}} style={s.terms} onPress={()=>set('termsAccepted',!form.termsAccepted)}><View style={[s.checkbox,form.termsAccepted&&s.checkboxChecked]}>{form.termsAccepted&&<Ionicons name="checkmark" size={13} color="white"/>}</View><Text style={s.termsText}>I accept the vendor terms</Text></Pressable>}
     {error?<View accessibilityRole="alert" style={s.errorBox}><Ionicons name="alert-circle-outline" size={18} color={colors.isDark?'#f0877a':'#a44232'}/><Text style={s.error}>{error}</Text></View>:null}
     <PrimaryButton title={busy?'Saving…':authorized?'Save store details':'Submit store for review'} disabled={busy||Boolean(mediaBusy)} onPress={()=>void save()} style={s.submitButton}/>
-    {onCancel&&<PrimaryButton title="Cancel" secondary onPress={onCancel} style={s.cancelButton}/>}
+    {onCancel&&<PrimaryButton title={cancelTitle??'Cancel'} secondary onPress={onCancel} style={s.cancelButton}/>}
     <Modal visible={hoursOpen} transparent animationType="slide" onRequestClose={()=>setHoursOpen(false)}>
       <View style={s.hoursOverlay}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close weekly hours" onPress={()=>setHoursOpen(false)} style={s.hoursBackdrop}/>

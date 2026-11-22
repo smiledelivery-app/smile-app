@@ -1,20 +1,30 @@
 import { Platform } from 'react-native';
 import type { ImagePickerAsset } from 'expo-image-picker';
-import NativeFormData from 'react-native/Libraries/Network/FormData';
+import * as FileSystem from 'expo-file-system/legacy';
 
-export function createUploadFormData(): FormData {
-  if(Platform.OS==='web')return new FormData();
-  return new NativeFormData() as unknown as FormData;
-}
+type MediaUploadResponse={ok:boolean;status:number;json:()=>Promise<unknown>};
 
-export async function appendMediaAsset(form:FormData,asset:ImagePickerAsset,fallbackName:string) {
-  const name=asset.fileName??fallbackName;
+export async function uploadMediaAsset(url:string,asset:ImagePickerAsset,fallbackName:string,parameters:Record<string,string>):Promise<MediaUploadResponse> {
   if(Platform.OS==='web'){
     const response=await fetch(asset.uri);
     if(!response.ok)throw new Error('Could not read the selected image.');
     const blob=await response.blob();
-    form.append('file',blob.type?blob:new Blob([blob],{type:asset.mimeType??'image/jpeg'}),name);
-    return;
+    const form=new FormData();
+    form.append('file',blob.type?blob:new Blob([blob],{type:asset.mimeType??'image/jpeg'}),asset.fileName??fallbackName);
+    for(const [key,value] of Object.entries(parameters))form.append(key,value);
+    return fetch(url,{method:'POST',body:form});
   }
-  form.append('file',{uri:asset.uri,name,type:asset.mimeType??'image/jpeg'} as unknown as Blob);
+
+  const response=await FileSystem.uploadAsync(url,asset.uri,{
+    httpMethod:'POST',
+    uploadType:FileSystem.FileSystemUploadType.MULTIPART,
+    fieldName:'file',
+    mimeType:asset.mimeType??'image/jpeg',
+    parameters,
+  });
+  return {
+    ok:response.status>=200&&response.status<300,
+    status:response.status,
+    json:async()=>JSON.parse(response.body) as unknown,
+  };
 }
