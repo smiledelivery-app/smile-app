@@ -45,6 +45,16 @@ The EAS `preview` profiles use the EAS `preview` environment. Set `EXPO_PUBLIC_A
 
 Build an internal Android preview with `eas build --profile preview --platform android` from either mobile app directory. Repeat with `--platform ios` for iOS. The mobile app's preview build gets the staging URL from the EAS `preview` environment; the production profile remains separately configured.
 
+### Over-the-air updates with EAS Update
+
+Both apps support EAS Update via `expo-updates` with the update URL pointing to each app's EAS project and runtime version tied to `appVersion`.
+
+Publish updates:
+- Customer app: `pnpm --filter @makanza/customer-mobile update` (or `eas update` within `apps/customer-mobile`)
+- Operations app: `pnpm --filter @makanza/operations-mobile update` (or `eas update` within `apps/operations-mobile`)
+- Root shortcuts: `pnpm mobile:customer:update` and `pnpm mobile:ops:update` (also available as `pnpm eas:update:customer` and `pnpm eas:update:ops`)
+- Channel-targeted: `pnpm --filter @makanza/customer-mobile update:preview` / `update:production` and `pnpm --filter @makanza/operations-mobile update:preview` / `update:production`
+
 ## In-app and push notifications
 
 The API persists user inbox notifications and device push tokens in PostgreSQL. Apply the migration with `pnpm db:migrate:deploy` (or `pnpm db:migrate:dev` locally) before deploying the API. Order status and rider-offer notifications are created by the API; admin broadcasts are sent from the dashboard to Customers, Vendors, Riders, or All. Broadcast recipients exclude demo accounts.

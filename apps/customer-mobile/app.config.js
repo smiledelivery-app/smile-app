@@ -10,7 +10,12 @@ if (process.env.GOOGLE_MAPS_IOS_API_KEY) maps.iosGoogleMapsApiKey = process.env.
 module.exports = {
   expo: {
     ...base,
-    updates: { ...base.updates, url: `https://u.expo.dev/${projectId}` },
+    updates: {
+      ...base.updates,
+      url: `https://u.expo.dev/${projectId}`,
+      checkAutomatically: 'ON_LOAD',
+      fallbackToCacheTimeout: 0,
+    },
     runtimeVersion: { policy: 'appVersion' },
     extra: {
       ...base.extra,

@@ -9,6 +9,10 @@
         "ios": "expo start --ios",
         "web": "expo start --web",
         "export:web": "expo export --platform web",
+        "update": "eas update",
+        "update:preview": "eas update --channel preview",
+        "update:production": "eas update --channel production",
+        "eas:update": "eas update",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {

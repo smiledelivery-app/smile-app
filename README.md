@@ -52,7 +52,9 @@ This test user has customer, vendor, and rider roles. In non-production environm
 - `pnpm db:migrate:deploy` — apply existing migrations
 - `pnpm db:seed:demo` — additive demo seed
 - `pnpm mobile:customer` — start customer Expo app
+- `pnpm mobile:customer:update` — publish EAS update for customer Expo app
 - `pnpm mobile:ops` — start shared vendor/rider Expo app
+- `pnpm mobile:ops:update` — publish EAS update for operations Expo app
 - `pnpm mobile:typecheck` — type-check the two mobile apps (after dependency install)
 
 ## Configuration
