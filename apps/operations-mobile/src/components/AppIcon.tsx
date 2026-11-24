@@ -9,11 +9,11 @@ import {
 
 type Props={name:string;size?:number;color?:string;strokeWidth?:number};
 const icons:Record<string,LucideIcon>={
-  add:Plus,'arrow-forward':ArrowRight,'chevron-back':ChevronLeft,'chevron-forward':ChevronRight,'chevron-down':ChevronDown,
+  add:Plus,'arrow-forward':ArrowRight,'arrow-back':ChevronLeft,'chevron-back':ChevronLeft,'chevron-forward':ChevronRight,'chevron-down':ChevronDown,
   'arrow-down-left':ArrowDownLeft,'arrow-up-right':ArrowUpRight,
   close:X,'create-outline':Pencil,'bicycle-outline':Bike,'storefront-outline':Store,'home-outline':House,
   'moon-outline':Moon,'sunny-outline':Sun,'person-outline':CircleUserRound,'receipt-outline':ReceiptText,
-  'cube-outline':Boxes,'flash-outline':Zap,'map-outline':Map,'image-outline':ImagePlus,'navigate-outline':Navigation,
+  'cube-outline':Boxes,'flash-outline':Zap,flash:Zap,'map-outline':Map,'image-outline':ImagePlus,'navigate-outline':Navigation,
   'notifications-outline':Bell,'time-outline':Clock3,'location-outline':MapPin,'search-outline':Search,
   'wallet-outline':WalletCards,'card-outline':CreditCard,'mail-outline':Mail,'phone-outline':Phone,
   'account-outline':UserRound,'star-outline':Star,
@@ -21,8 +21,8 @@ const icons:Record<string,LucideIcon>={
   'settings-outline':Settings,'help-circle-outline':CircleHelp,'information-circle-outline':Info,
   'shield-checkmark-outline':ShieldCheck,'trash-outline':Trash2,'eye-outline':Eye,'eye-off-outline':EyeOff,
   'refresh-outline':RefreshCw,'restaurant-outline':Utensils,'language-outline':Languages,
-  'bag-handle-outline':ShoppingBag,'checkmark':Check,'checkmark-circle-outline':CircleCheckBig,
-  'alert-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,'logo-whatsapp':MessageCircle,
+  'bag-handle-outline':ShoppingBag,'checkmark':Check,'checkmark-circle-outline':CircleCheckBig,'checkmark-done-outline':CircleCheckBig,
+  'alert-circle-outline':CircleAlert,'close-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,'logo-whatsapp':MessageCircle,'megaphone-outline':Bell,
 };
 
 export function AppIcon({name,size=24,color,strokeWidth=2.2}:Props){const Icon=icons[name]??CircleDot;return <Icon size={size} color={color} strokeWidth={strokeWidth}/>;}

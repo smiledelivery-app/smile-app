@@ -97,6 +97,8 @@ export default function App(){
   const [notificationsError,setNotificationsError]=useState('');
   const [pushToken,setPushToken]=useState('');
   const [cart,setCart]=useState<CartLine[]>([]);
+  const [cartVisible,setCartVisible]=useState(false);
+  const [openCartAfterAddress,setOpenCartAfterAddress]=useState(false);
   const [pendingPaymentOrder,setPendingPaymentOrder]=useState<{id:string;totalMinor:number}|null>(null);
   const [paymentPickerVisible,setPaymentPickerVisible]=useState(false);
   const [paymentError,setPaymentError]=useState('');
@@ -150,13 +152,14 @@ export default function App(){
 
   useEffect(()=>{
     const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{
+      if(cartVisible){setCartVisible(false);return true;}
       if(addressPicker){setAddressPicker(false);if(screen==='addresses')goBack();return true;}
       if(screen==='home'){BackHandler.exitApp();return true;}
       goBack();
       return true;
     });
     return()=>subscription.remove();
-  },[screen,addressPicker]);
+  },[screen,addressPicker,cartVisible]);
 
   useEffect(()=>{
     let active=true;
@@ -294,11 +297,11 @@ export default function App(){
     }catch(e){logPhoneVerificationError('[phone verification] resend API error',e);setError(e instanceof Error?e.message:'Could not resend your verification code.');return false;}
     finally{setBusy(false);}
   };
-  const add= (product:Product,addons:import('../screens/VendorMenuScreen').Choice[]=[],quantity=1)=>{if(!activeVendor)return;if(pendingPaymentOrder){setNotice('Finish payment for your current order before adding more items.');return;}if(cart.length&&cart[0].vendorId!==activeVendor.id){setNotice('Your bag is for one kitchen at a time. Finish or clear the current bag first.');return;}const key=(xs:typeof addons)=>xs.map(x=>`${x.addon.id}:${x.quantity}`).sort().join('|');setCart(lines=>{const existing=lines.find(line=>line.product.id===product.id&&key(line.addons)===key(addons));return existing?lines.map(line=>line.id===existing.id?{...line,quantity:line.quantity+quantity}:line):[...lines,{id:`${product.id}:${key(addons)}:${Date.now()}`,product,quantity,vendorId:activeVendor.id,vendorName:activeVendor.name,addons}];});const message=`${quantity>1?`${quantity} × `:''}${product.name}${addons.length?` with ${addons.map(x=>`${x.quantity} ${x.addon.name}`).join(', ')}`:''} added.`;setCartAddedNotice(message);setNotice(message);};
+  const add= (product:Product,addons:import('../screens/VendorMenuScreen').Choice[]=[],quantity=1)=>{if(!activeVendor)return;if(pendingPaymentOrder){setNotice('Finish payment for your current order before adding more items.');return;}if(cart.length&&cart[0].vendorId!==activeVendor.id){setNotice('Your bag is for one kitchen at a time. Finish or clear the current bag first.');return;}const key=(xs:typeof addons)=>xs.map(x=>`${x.addon.id}:${x.quantity}`).sort().join('|');setCart(lines=>{const existing=lines.find(line=>line.product.id===product.id&&key(line.addons)===key(addons));return existing?lines.map(line=>line.id===existing.id?{...line,quantity:line.quantity+quantity}:line):[...lines,{id:`${product.id}:${key(addons)}:${Date.now()}`,product,quantity,vendorId:activeVendor.id,vendorName:activeVendor.name,addons}];});setCartVisible(true);};
   const placeOrder=async()=>{
-    if(!token&&!mobileEnv.demoMode){setScreen('profile');setNotice('Sign in to continue.');return;}
+    if(!token&&!mobileEnv.demoMode){setCartVisible(false);setScreen('profile');setNotice('Sign in to continue.');return;}
     if(!cart.length)return;
-    if(!hasDeliveryCoordinates(selectedAddress)){setAddressPicker(true);setNotice('Choose a location on the map before placing your order.');return;}
+    if(!hasDeliveryCoordinates(selectedAddress)){setOpenCartAfterAddress(true);setCartVisible(false);setAddressPicker(true);setNotice('Choose a location on the map before placing your order.');return;}
     if(mobileEnv.demoMode){
       const now=new Date().toISOString();
       const vendor=demoVendors.find(item=>item.id===cart[0].vendorId);
@@ -306,6 +309,7 @@ export default function App(){
       const order:CustomerOrder={id:`demo-order-${Date.now()}`,displayNumber:1043,status:'CONFIRMED',totalMinor,createdAt:now,vendor:{name:cart[0].vendorName},delivery:{status:'UNASSIGNED',assignedAt:null,riderName:null},items:cart.map((line,index)=>({id:`demo-line-${Date.now()}-${index}`,nameSnapshot:line.product.name,quantity:line.quantity,unitPriceMinor:line.product.priceMinor,addons:line.addons.map(item=>({id:item.addon.id,nameSnapshot:item.addon.name,quantity:item.quantity,unitPriceMinor:item.addon.priceMinor}))})),events:[{id:`demo-event-${Date.now()}`,status:'CONFIRMED',createdAt:now}]};
       setOrders(current=>[order,...current]);
       setCart([]);
+      setCartVisible(false);
       setScreen('orders');
       setNotice('Sample order placed locally. No payment or delivery request was sent.');
       return;
@@ -316,11 +320,13 @@ export default function App(){
       const order=await api.post<{id:string;totalMinor:number;status:string}>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(line=>({productId:line.product.id,quantity:line.quantity,addons:line.addons.map(item=>({addonId:item.addon.id,quantity:item.quantity}))}))},token!);
       if(order.status==='CONFIRMED'){
         setCart([]);
+        setCartVisible(false);
         setScreen('orders');
         setNotice('Your order is confirmed.');
         await loadOrders(token!);
         return;
       }
+      setCartVisible(false);
       setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});
       setPaymentError('');
       setPaymentPickerVisible(true);
@@ -443,16 +449,13 @@ export default function App(){
       <Pressable accessibilityRole="button" accessibilityLabel={isDark?'Switch to light mode':'Switch to dark mode'} onPress={toggleTheme} style={[styles.themeToggle,{width:44,height:44,alignItems:'center',justifyContent:'center',padding:0}]}>
         <Ionicons name={isDark?'sunny-outline':'moon-outline'} size={20} color={palette.primary}/>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={`Shopping cart, ${cart.reduce((n,l)=>n+l.quantity,0)} items`} onPress={()=>setScreen('bag')} style={styles.bagButton}>
-        <Ionicons name="cart-outline" size={22} color={palette.primary}/>{cart.reduce((n,l)=>n+l.quantity,0)>0&&<View style={styles.bagCount}><Text style={styles.bagCountText}>{cart.reduce((n,l)=>n+l.quantity,0)}</Text></View>}
-      </Pressable>
     </View>
   </View>}
     {screen==='home'&&<HomeScreen vendors={vendors} userLocation={homeLocation} popularProducts={popularProducts} popularLoading={popularLoading} popularError={popularError} loading={loading} error={error} query={query} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);setScreen('search');void loadVendors(searchTerm);}} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/>}
     {screen==='search'&&<SearchScreen query={query} recentSearches={recentSearches} vendors={vendors} loading={loading&&vendors.length===0} error={error} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);void loadVendors(searchTerm);}} onRecentSearch={term=>{setQuery(term);recordRecentSearch(term);void loadVendors(term);}} onClearRecent={clearRecentSearches} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/> }
     {screen==='wallet'&&<WalletScreen token={token??null} demoMode={mobileEnv.demoMode} colors={colors} onSignIn={()=>setScreen('profile')} onHistory={()=>setScreen('wallet-activity')}/>}
-    {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading&&products.length===0} error={error} dark={isDark} userLocation={homeLocation} favoriteVendor={!!activeVendor&&favoriteVendorIds.includes(activeVendor.id)} favoriteProductIds={favoriteProducts.filter(item=>item.vendor.id===activeVendor?.id).map(item=>item.id)} onBack={goBack} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add} onToggleVendorFavorite={()=>activeVendor&&toggleFavorite(activeVendor.id)} onToggleProductFavorite={product=>activeVendor&&toggleProductFavorite(product,activeVendor)}/>}
-    {screen==='bag'&&<CartScreen lines={cart} subtotal={subtotal} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} demoMode={mobileEnv.demoMode} pendingPayment={!!pendingPaymentOrder} onPickAddress={()=>setAddressPicker(true)} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onContinuePayment={()=>{setPaymentError('');setPaymentPickerVisible(true);}} onBrowse={goBack} onSignIn={()=>setScreen('profile')}/>}
+    {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading&&products.length===0} error={error} dark={isDark} userLocation={homeLocation} favoriteVendor={!!activeVendor&&favoriteVendorIds.includes(activeVendor.id)} favoriteProductIds={favoriteProducts.filter(item=>item.vendor.id===activeVendor?.id).map(item=>item.id)} cartCount={cart.reduce((n,l)=>n+l.quantity,0)} cartTotalMinor={subtotal} onOpenCart={()=>setCartVisible(true)} onBack={goBack} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add} onToggleVendorFavorite={()=>activeVendor&&toggleFavorite(activeVendor.id)} onToggleProductFavorite={product=>activeVendor&&toggleProductFavorite(product,activeVendor)}/>}
+    <CartScreen visible={cartVisible} onClose={()=>setCartVisible(false)} lines={cart} subtotal={subtotal} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} demoMode={mobileEnv.demoMode} pendingPayment={!!pendingPaymentOrder} onPickAddress={()=>{setOpenCartAfterAddress(true);setCartVisible(false);setAddressPicker(true);}} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onContinuePayment={()=>{setCartVisible(false);setPaymentError('');setPaymentPickerVisible(true);}} onBrowse={()=>setCartVisible(false)} onSignIn={()=>{setCartVisible(false);setScreen('profile');}}/>
     {screen==='orders'&&<OrdersScreen orders={orders} loading={loading} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onRetry={()=>token&&void loadOrders(token)} onSignIn={()=>setScreen('profile')} onOpen={order=>{setDetailOrder(order);setScreen('order-detail');}} onCancel={(id,reason,details)=>void cancelCustomerOrder(id,reason,details)} onPayOrder={order=>{setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});setPaymentError('');setPaymentPickerVisible(true);}}/>}
     {screen==='notifications'&&<NotificationsScreen items={notificationInbox.items} unreadCount={notificationInbox.unreadCount} loading={notificationsLoading} error={notificationsError} hasAccount={!!session} colors={colors} onRetry={()=>token&&void loadNotifications(token)} onSignIn={()=>setScreen('profile')} onOpen={item=>void openNotification(item)} onReadAll={()=>void markAllNotificationsRead()} onBack={goBack}/>}
     {screen==='order-detail'&&detailOrder&&<OrderDetailScreen order={orders.find(x=>x.id===detailOrder.id)??detailOrder} colors={colors} token={token??null} demoMode={mobileEnv.demoMode} onBack={goBack}/>}
@@ -469,12 +472,12 @@ export default function App(){
     {screen==='password'&&!token&&<AccountInfoScreen kind="account-required" colors={colors} onBack={goBack}/>}
     {screen==='profile'&&<ProfileScreen session={profileSession} colors={colors} guest={!session} onSignIn={()=>setScreen('profile')} onSignOut={()=>void signOut()} onEdit={()=>setScreen('profile-edit')} onPreferences={()=>setScreen('preferences')} onPassword={()=>setScreen('password')} onAddresses={()=>{setScreen('addresses');setAddressPicker(true);}} onFavorites={()=>setScreen('favorites')} onWallet={()=>setScreen('wallet')} onHelp={()=>setScreen('help')} onAbout={()=>setScreen('about')}/>}
     {primaryTab&&<TabBar active={screen as 'home'|'search'|'orders'|'wallet'|'profile'} dark={isDark} onChange={tab=>{setScreen(tab);if(tab==='orders'&&token)void loadOrders(token);if(tab==='home')void loadVendors();}}/>}
-    <AddressPickerModal visible={addressPicker} token={token??null} colors={colors} manageMode={screen==='addresses'} onClose={()=>{setAddressPicker(false);if(screen==='addresses')goBack();}} onSelect={place=>{chooseAddress(place);if(screen==='addresses')goBack();}} onSignIn={()=>{setAddressPicker(false);setScreen('profile');}}/>
+    <AddressPickerModal visible={addressPicker} token={token??null} colors={colors} manageMode={screen==='addresses'} onClose={()=>{setAddressPicker(false);if(openCartAfterAddress){setOpenCartAfterAddress(false);setCartVisible(true);}else if(screen==='addresses')goBack();}} onSelect={place=>{chooseAddress(place);if(openCartAfterAddress){setOpenCartAfterAddress(false);setCartVisible(true);}else if(screen==='addresses')goBack();}} onSignIn={()=>{setAddressPicker(false);setOpenCartAfterAddress(false);setScreen('profile');}}/>
     {pendingPaymentOrder&&token&&<OrderPaymentModal visible={paymentPickerVisible} token={token} amountMinor={pendingPaymentOrder.totalMinor} busy={busy} error={paymentError} colors={colors} onClose={()=>setPaymentPickerVisible(false)} onPay={method=>void payForOrder(method)}/>}
     {orderCheckout&&<PaystackCheckoutModal visible authorizationUrl={orderCheckout.authorizationUrl} reference={orderCheckout.reference} colors={colors} subtitle={`Pay for order ${orderCheckout.orderId.slice(-8)}`} confirmationMessage="Your order will be confirmed after Paystack verifies the payment." onClose={closeOrderCheckout} onPaymentReturn={reference=>void handleOrderPaymentReturn(reference)}/>}
     {notice?<View pointerEvents="box-none" accessibilityLiveRegion="polite" style={[toastStyles.position,primaryTab&&toastStyles.aboveTabBar]}>
       <View style={toastStyles.toast}>
-        {notice===cartAddedNotice?<Pressable accessibilityRole="button" accessibilityHint="Opens your bag" onPress={()=>{setNotice('');setCartAddedNotice('');setScreen('bag');}} style={{flex:1,flexDirection:'row',alignItems:'center',gap:10}}>
+        {notice===cartAddedNotice?<Pressable accessibilityRole="button" accessibilityHint="Opens your bag" onPress={()=>{setNotice('');setCartAddedNotice('');setCartVisible(true);}} style={{flex:1,flexDirection:'row',alignItems:'center',gap:10}}>
           <View style={toastStyles.icon}><Ionicons name="information-circle-outline" size={21} color={palette.primary}/></View>
           <Text style={toastStyles.message}>{notice}</Text>
         </Pressable>:<>
@@ -497,8 +500,5 @@ const createStyles=(colors:AppColors)=>{
     locationName:{fontSize:13,color:c.ink,fontWeight:'800',flexShrink:1},
     themeToggle:{paddingHorizontal:8,paddingVertical:7,borderRadius:customerRadius.md,backgroundColor:c.surfaceAlt},
     notificationDot:{position:'absolute',right:5,top:3,width:8,height:8,borderRadius:4,backgroundColor:c.accent,borderWidth:1,borderColor:c.canvas},
-    bagButton:{width:44,height:44,backgroundColor:c.surface,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,alignItems:'center',justifyContent:'center'},
-    bagCount:{position:'absolute',right:-2,top:-2,minWidth:18,height:18,borderRadius:10,backgroundColor:c.accent,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:c.canvas},
-    bagCountText:{fontSize:10,color:'white',fontWeight:'900'},
   });
 };

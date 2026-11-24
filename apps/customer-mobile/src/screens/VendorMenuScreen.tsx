@@ -1,6 +1,6 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { useState } from 'react';
-import { ActivityIndicator, Image, ImageBackground, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Image, ImageBackground, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import { BackHeader } from '../components/ui';
 import { darkColors, lightColors } from '../theme/colors';
@@ -10,10 +10,85 @@ import { distanceInKm } from '../utils/distance';
 import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
 export type Choice={addon:ProductAddon;quantity:number};
-type Props={vendor:Vendor|null;products:Product[];loading:boolean;error:string;dark:boolean;userLocation:{latitude:number;longitude:number}|null;favoriteVendor:boolean;favoriteProductIds:string[];onBack:()=>void;onRetry:()=>void;onAdd:(product:Product,addons:Choice[],quantity?:number)=>void;onToggleVendorFavorite:()=>void;onToggleProductFavorite:(product:Product)=>void};
+type Props={
+  vendor:Vendor|null;
+  products:Product[];
+  loading:boolean;
+  error:string;
+  dark:boolean;
+  userLocation:{latitude:number;longitude:number}|null;
+  favoriteVendor:boolean;
+  favoriteProductIds:string[];
+  cartCount?:number;
+  cartTotalMinor?:number;
+  onOpenCart?:()=>void;
+  onBack:()=>void;
+  onRetry:()=>void;
+  onAdd:(product:Product,addons:Choice[],quantity?:number)=>void;
+  onToggleVendorFavorite:()=>void;
+  onToggleProductFavorite:(product:Product)=>void;
+};
 const money=(minor:number)=>`₦${(minor/100).toLocaleString('en-NG')}`;
 
-export default function VendorMenuScreen({vendor,products,loading,error,dark,userLocation,favoriteVendor,favoriteProductIds,onBack,onRetry,onAdd,onToggleVendorFavorite,onToggleProductFavorite}:Props){
+function SafeItemImage({
+  productImage,
+  storeImage,
+  style,
+  fallbackStyle,
+  icon='restaurant-outline',
+  iconSize=24,
+  iconColor,
+}:{
+  productImage?:string|null;
+  storeImage?:string|null;
+  style:any;
+  fallbackStyle:any;
+  icon?:any;
+  iconSize?:number;
+  iconColor:string;
+}){
+  const [triedStore,setTriedStore]=useState(false);
+  const [failed,setFailed]=useState(false);
+  const productUri=productImage?.trim()||null;
+  const storeUri=storeImage?.trim()||null;
+  const activeUri=!failed?(!triedStore&&productUri?productUri:storeUri):null;
+
+  if(activeUri){
+    return <Image
+      source={{uri:activeUri}}
+      style={style}
+      onError={()=>{
+        if(!triedStore&&productUri&&storeUri&&productUri!==storeUri){
+          setTriedStore(true);
+        }else{
+          setFailed(true);
+        }
+      }}
+    />;
+  }
+  return <View style={fallbackStyle}>
+    <Ionicons name={icon} size={iconSize} color={iconColor}/>
+  </View>;
+}
+
+export default function VendorMenuScreen({
+  vendor,
+  products,
+  loading,
+  error,
+  dark,
+  userLocation,
+  favoriteVendor,
+  favoriteProductIds,
+  cartCount=0,
+  cartTotalMinor=0,
+  onOpenCart,
+  onBack,
+  onRetry,
+  onAdd,
+  onToggleVendorFavorite,
+  onToggleProductFavorite
+}:Props){
   const [selected,setSelected]=useState<Product|null>(null);
   const [choices,setChoices]=useState<Record<string,number>>({});
   const [quantities,setQuantities]=useState<Record<string,number>>({});
@@ -28,7 +103,7 @@ export default function VendorMenuScreen({vendor,products,loading,error,dark,use
 
   return <View style={[s.screen,dark&&s.screenDark]}>
     <BackHeader title="Nearby kitchens" subtitle="Browse this kitchen menu" colors={c} onBack={onBack}/>
-    <ScrollView style={{flex:1}} contentContainerStyle={s.page}>
+    <ScrollView style={{flex:1}} contentContainerStyle={[s.page,cartCount>0&&{paddingBottom:92}]}>
       {vendor&&<>
         <ImageBackground source={{uri:vendor.image||'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1100&q=85'}} imageStyle={s.coverImage} style={s.cover}>
           <View style={s.shade}/>
@@ -51,7 +126,7 @@ export default function VendorMenuScreen({vendor,products,loading,error,dark,use
         const extras=(product.addons??[]).filter(addon=>addon.available);
         return <View key={product.id} style={[s.item,dark&&s.cardDark]}>
           <View style={s.itemTop}>
-            {product.imageUrl?<Image source={{uri:product.imageUrl}} style={s.photo}/>:<View style={s.photoPlaceholder}><Ionicons name="restaurant-outline" size={24} color={p.primary}/></View>}
+            <SafeItemImage productImage={product.imageUrl} storeImage={vendor?.image} style={s.photo} fallbackStyle={s.photoPlaceholder} iconColor={p.primary} iconSize={24}/>
             <View style={s.copy}><Text style={[s.productName,dark&&s.textDark]}>{product.name}</Text><Text style={[s.description,dark&&s.mutedDark]} numberOfLines={2}>{product.description}</Text><Text style={s.price}>{money(product.priceMinor)}</Text>
               {!!extras.length&&<Pressable accessibilityRole="button" onPress={()=>{setSelected(product);setChoices({});}}><Text style={s.action}>Choose extras · from {money(product.priceMinor)}</Text></Pressable>}
             </View>
@@ -71,6 +146,16 @@ export default function VendorMenuScreen({vendor,products,loading,error,dark,use
         <Pressable accessibilityRole="button" style={s.addConfirm} onPress={()=>{onAdd(selected,(selected.addons??[]).filter(addon=>(choices[addon.id]??0)>0).map(addon=>({addon,quantity:choices[addon.id]})),quantities[selected.id]??1);setSelected(null);}}><Text style={s.addConfirmText}>Add {quantities[selected.id]??1} · {money(price(selected)*(quantities[selected.id]??1))}</Text></Pressable>
       </View>}
     </ScrollView>
+    {cartCount>0&&onOpenCart&&<View style={s.bottomCartBar}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`View bag with ${cartCount} ${cartCount===1?'item':'items'}, total ${money(cartTotalMinor)}`} onPress={onOpenCart} style={({pressed})=>[s.bottomCartButton,pressed&&s.bottomCartButtonPressed]}>
+        <View style={s.bottomCartBadge}>
+          <Text style={s.bottomCartBadgeText}>{cartCount}</Text>
+        </View>
+        <Text style={s.bottomCartText}>View bag</Text>
+        <Text style={s.bottomCartTotal}>{money(cartTotalMinor)}</Text>
+        <Ionicons name="arrow-forward" size={17} color="white"/>
+      </Pressable>
+    </View>}
   </View>;
 }
 
@@ -84,5 +169,12 @@ const styles=(colors:AppColors)=>{
     section:{paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.xl,paddingBottom:4},sectionEyebrow:{fontSize:9,fontWeight:'900',letterSpacing:1.1,color:c.primary},sectionTitle:{fontSize:23,fontWeight:'900',letterSpacing:-.6,color:c.ink,marginTop:3},sectionBody:{fontSize:11,lineHeight:17,color:c.muted,marginTop:4},
     item:{marginHorizontal:customerSpace.lg,marginTop:9,padding:customerSpace.md,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface},itemTop:{flexDirection:'row',alignItems:'center',gap:11},photo:{width:76,height:76,borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},photoPlaceholder:{width:76,height:76,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primarySoft},copy:{flex:1,gap:4},productFavorite:{width:38,height:38,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},productName:{fontSize:14,fontWeight:'800',color:c.ink},description:{fontSize:11,lineHeight:17,color:c.muted},price:{fontSize:13,fontWeight:'900',color:c.primary},action:{fontSize:11,fontWeight:'900',color:c.primary,marginTop:3},itemBottom:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10,marginTop:12,paddingTop:10,borderTopWidth:1,borderColor:c.border},quantity:{flexDirection:'row',alignItems:'center',gap:10},qty:{width:38,height:38,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:c.primarySoft},qtyLabel:{fontSize:20,fontWeight:'900',color:c.primary},qtyValue:{minWidth:18,textAlign:'center',fontSize:14,fontWeight:'900',color:c.ink},add:{minHeight:42,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:7,paddingHorizontal:13,borderRadius:customerRadius.sm,backgroundColor:c.primarySoft},addText:{fontSize:11,fontWeight:'900',color:c.primary},
     state:{padding:customerSpace.xl,alignItems:'center',gap:8},stateText:{fontSize:12,lineHeight:19,textAlign:'center',color:c.muted},textDark:{color:c.ink},mutedDark:{color:c.muted},modal:{margin:14,padding:15,borderRadius:customerRadius.lg,borderColor:c.border,borderWidth:1,backgroundColor:c.surface},modalHeader:{flexDirection:'row',alignItems:'center',marginBottom:8},modalTitle:{fontSize:18,fontWeight:'900',color:c.ink},extraRow:{minHeight:54,flexDirection:'row',alignItems:'center',gap:12,borderTopWidth:1,borderColor:c.border},addConfirm:{minHeight:49,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primary,marginTop:12},addConfirmText:{fontSize:12,fontWeight:'900',color:'white'},
+    bottomCartBar:{position:'absolute',left:0,right:0,bottom:0,paddingHorizontal:customerSpace.lg,paddingTop:10,paddingBottom:Platform.OS==='ios'?24:14,backgroundColor:c.canvas,borderTopWidth:1,borderTopColor:c.border,shadowColor:'#000',shadowOffset:{width:0,height:-3},shadowOpacity:.12,shadowRadius:8,elevation:8},
+    bottomCartButton:{minHeight:50,flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10,paddingHorizontal:16,borderRadius:customerRadius.md,backgroundColor:c.primary},
+    bottomCartButtonPressed:{opacity:.85},
+    bottomCartBadge:{minWidth:24,height:24,borderRadius:12,backgroundColor:'rgba(255,255,255,0.25)',alignItems:'center',justifyContent:'center',paddingHorizontal:6},
+    bottomCartBadgeText:{fontSize:12,fontWeight:'900',color:'white'},
+    bottomCartText:{flex:1,fontSize:13,fontWeight:'800',color:'white'},
+    bottomCartTotal:{fontSize:13,fontWeight:'900',color:'white'},
   });
 };

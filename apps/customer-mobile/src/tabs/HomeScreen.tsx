@@ -17,45 +17,95 @@ type CategoryName='All'|'Restaurants'|'Pharmacy'|'Groceries'|'Pickup'|'Markets'|
 type CategoryIconName='view-grid-outline'|'silverware-fork-knife'|'medical-bag'|'basket'|'bike-fast'|'storefront-outline'|'hamburger'|'bottle-soda';
 type Category={name:CategoryName;term:string;icon:CategoryIconName;lightBackground:string;darkBackground:string;lightIcon:string;darkIcon:string};
 const categories:Category[]=[
-  {name:'All',term:'',icon:'view-grid-outline',lightBackground:'#1b5b42',darkBackground:'#174b36',lightIcon:'#ffffff',darkIcon:'#d6e2d9'},
-  {name:'Restaurants',term:'restaurant',icon:'silverware-fork-knife',lightBackground:'#e8c65a',darkBackground:'#504221',lightIcon:'#183a2b',darkIcon:'#f4d57c'},
-  {name:'Pharmacy',term:'pharmacy',icon:'medical-bag',lightBackground:'#edf3ff',darkBackground:'#222e42',lightIcon:'#4567a0',darkIcon:'#a6c1f0'},
-  {name:'Groceries',term:'groceries',icon:'basket',lightBackground:'#edf6eb',darkBackground:'#253426',lightIcon:'#4c7849',darkIcon:'#a8d09f'},
-  {name:'Pickup',term:'pickup',icon:'bike-fast',lightBackground:'#eaf5f5',darkBackground:'#203537',lightIcon:'#3d7778',darkIcon:'#9bd0d0'},
-  {name:'Markets',term:'market',icon:'storefront-outline',lightBackground:'#FE993C',darkBackground:'#5c351c',lightIcon:'#3b260f',darkIcon:'#ffd7a3'},
-  {name:'Bakery',term:'bakery',icon:'hamburger',lightBackground:'#f7edfa',darkBackground:'#382c3b',lightIcon:'#80558b',darkIcon:'#d5abe0'},
-  {name:'Drinks',term:'drinks',icon:'bottle-soda',lightBackground:'#edf0ff',darkBackground:'#272d44',lightIcon:'#5b69a2',darkIcon:'#adbaf4'},
+  {name:'All',term:'',icon:'view-grid-outline',lightBackground:'#eaf4ee',darkBackground:'#16281e',lightIcon:'#1b5b42',darkIcon:'#87c6a0'},
+  {name:'Restaurants',term:'restaurant',icon:'silverware-fork-knife',lightBackground:'#fef4e2',darkBackground:'#2d2417',lightIcon:'#b07412',darkIcon:'#f4d57c'},
+  {name:'Pharmacy',term:'pharmacy',icon:'medical-bag',lightBackground:'#eff4fe',darkBackground:'#1b2436',lightIcon:'#3f67a8',darkIcon:'#a6c1f0'},
+  {name:'Groceries',term:'groceries',icon:'basket',lightBackground:'#eff7ee',darkBackground:'#1c2b1e',lightIcon:'#3d783a',darkIcon:'#a8d09f'},
+  {name:'Pickup',term:'pickup',icon:'bike-fast',lightBackground:'#eaf6f6',darkBackground:'#19282b',lightIcon:'#2e7577',darkIcon:'#9bd0d0'},
+  {name:'Markets',term:'market',icon:'storefront-outline',lightBackground:'#fef0e4',darkBackground:'#302218',lightIcon:'#bf621a',darkIcon:'#ffd7a3'},
+  {name:'Bakery',term:'bakery',icon:'hamburger',lightBackground:'#f9eefa',darkBackground:'#281c2b',lightIcon:'#854b91',darkIcon:'#d5abe0'},
+  {name:'Drinks',term:'drinks',icon:'bottle-soda',lightBackground:'#eff1fe',darkBackground:'#1e2238',lightIcon:'#505ea5',darkIcon:'#adbaf4'},
 ];
 const heroSlides=[
   {
-    background:'#FE993C',
+    background:'#de6e35',
+    accentPill:'rgba(255,255,255,0.22)',
+    orbColor1:'rgba(255,255,255,0.14)',
+    orbColor2:'rgba(0,0,0,0.06)',
     foreground:'#ffffff',
-    secondary:'#fff4e7',
-    inactiveDot:'rgba(255,255,255,.55)',
+    secondary:'#fef2ea',
+    inactiveDot:'rgba(255,255,255,0.45)',
     eyebrow:'THE NEIGHBOURHOOD TABLE',
     headline:'Good things,\nclose by.',
     subhead:'Meals and everyday essentials from places around you.',
   },
   {
-    background:'#e8c65a',
-    foreground:'#183a2b',
-    secondary:'#314638',
-    inactiveDot:'rgba(24,58,43,.4)',
+    background:'#d6a542',
+    accentPill:'rgba(20,48,34,0.12)',
+    orbColor1:'rgba(255,255,255,0.25)',
+    orbColor2:'rgba(20,48,34,0.06)',
+    foreground:'#153625',
+    secondary:'#374d41',
+    inactiveDot:'rgba(21,54,37,0.3)',
     eyebrow:'MORE TO DISCOVER',
     headline:'Meals, market\nruns, and more.',
     subhead:'Explore nearby kitchens and everyday essentials in one place.',
   },
   {
-    background:'#1b5b42',
+    background:'#1a543e',
+    accentPill:'rgba(255,255,255,0.2)',
+    orbColor1:'rgba(255,255,255,0.12)',
+    orbColor2:'rgba(0,0,0,0.08)',
     foreground:'#ffffff',
-    secondary:'#e6eee8',
-    inactiveDot:'rgba(255,255,255,.55)',
+    secondary:'#d9e8df',
+    inactiveDot:'rgba(255,255,255,0.45)',
     eyebrow:'YOUR ORDER, IN VIEW',
     headline:'Choose a kitchen.\nTrack every step.',
     subhead:'Browse nearby menus, place your order, and follow its progress.',
   },
 ] as const;
 const money=(minor:number)=>`₦${(minor/100).toLocaleString('en-NG')}`;
+
+function SafeItemImage({
+  productImage,
+  storeImage,
+  style,
+  fallbackStyle,
+  icon='restaurant-outline',
+  iconSize=24,
+  iconColor,
+}:{
+  productImage?:string|null;
+  storeImage?:string|null;
+  style:any;
+  fallbackStyle:any;
+  icon?:any;
+  iconSize?:number;
+  iconColor:string;
+}){
+  const [triedStore,setTriedStore]=useState(false);
+  const [failed,setFailed]=useState(false);
+  const productUri=productImage?.trim()||null;
+  const storeUri=storeImage?.trim()||null;
+  const activeUri=!failed?(!triedStore&&productUri?productUri:storeUri):null;
+
+  if(activeUri){
+    return <Image
+      source={{uri:activeUri}}
+      style={style}
+      onError={()=>{
+        if(!triedStore&&productUri&&storeUri&&productUri!==storeUri){
+          setTriedStore(true);
+        }else{
+          setFailed(true);
+        }
+      }}
+    />;
+  }
+  return <View style={fallbackStyle}>
+    <Ionicons name={icon} size={iconSize} color={iconColor}/>
+  </View>;
+}
 
 function travelText(vendor:Vendor,userLocation:UserLocation|null){
   const eta=vendor.eta==='Estimate at checkout'?'ETA at checkout':vendor.eta;
@@ -115,7 +165,11 @@ export default function HomeScreen({vendors,userLocation,popularProducts,popular
           onMomentumScrollEnd={(event:NativeSyntheticEvent<NativeScrollEvent>)=>setHeroIndex(Math.min(heroSlides.length-1,Math.max(0,Math.round(event.nativeEvent.contentOffset.x/heroWidth))))}
         >
           {heroSlides.map((slide,index)=><View key={index} style={[s.heroCard,{width:heroWidth,backgroundColor:slide.background}]}>
-            <Text style={[s.eyebrow,{color:slide.secondary},slide.foreground==='#ffffff'&&s.whiteTextShadow]}>{slide.eyebrow}</Text>
+            <View style={[s.heroOrb1,{backgroundColor:slide.orbColor1}]}/>
+            <View style={[s.heroOrb2,{backgroundColor:slide.orbColor2}]}/>
+            <View style={[s.eyebrowBadge,{backgroundColor:slide.accentPill}]}>
+              <Text style={[s.eyebrow,{color:slide.foreground}]}>{slide.eyebrow}</Text>
+            </View>
             <Text style={[s.headline,{color:slide.foreground},slide.foreground==='#ffffff'&&s.whiteTextShadow]}>{slide.headline}</Text>
             <Text style={[s.subhead,{color:slide.secondary},slide.foreground==='#ffffff'&&s.whiteTextShadow]}>{slide.subhead}</Text>
             <Text style={[s.slideCount,{color:slide.secondary},slide.foreground==='#ffffff'&&s.whiteTextShadow]}>{String(index+1).padStart(2,'0')} / {String(heroSlides.length).padStart(2,'0')}</Text>
@@ -134,19 +188,23 @@ export default function HomeScreen({vendors,userLocation,popularProducts,popular
       </View>
 
       <View style={s.categoryGrid}>
-        {categories.map(category=>{const selected=selectedCategory===category.term;const iconColor=dark?category.darkIcon:category.lightIcon;return <Pressable key={category.name} accessibilityRole="button" accessibilityState={{selected}} onPress={()=>selectCategory(category)} style={s.category}>
-          <View style={[s.categoryIconBox,{backgroundColor:dark?category.darkBackground:category.lightBackground},selected&&category.name!=='All'&&s.categorySelectedIconBox]}>
-            <MaterialCommunityIcons name={category.icon} size={23} color={iconColor}/>
-          </View>
-          <Text style={[s.categoryText,selected&&s.categoryTextSelected]} numberOfLines={1}>{category.name}</Text>
-        </Pressable>;})}
+        {categories.map(category=>{
+          const selected=(selectedCategory===''&&category.name==='All')||selectedCategory===category.term;
+          const iconColor=dark?category.darkIcon:category.lightIcon;
+          return <Pressable key={category.name} accessibilityRole="button" accessibilityState={{selected}} onPress={()=>selectCategory(category)} style={s.category}>
+            <View style={[s.categoryIconBox,{backgroundColor:dark?category.darkBackground:category.lightBackground},selected&&s.categorySelectedIconBox]}>
+              <MaterialCommunityIcons name={category.icon} size={23} color={iconColor}/>
+            </View>
+            <Text style={[s.categoryText,selected&&s.categoryTextSelected]} numberOfLines={1}>{category.name}</Text>
+          </Pressable>;
+        })}
       </View>
 
       {featuredVendors.length>0&&<View style={s.section}>
         <View style={s.sectionHeading}><View><Text style={s.sectionTitle}>Neighbourhood favourites</Text><Text style={s.sectionSubtitle}>Places worth knowing</Text></View><Pressable accessibilityRole="button" onPress={()=>onSearch('restaurant')} hitSlop={8}><Text style={s.seeAll}>Explore</Text></Pressable></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.featuredList}>
           {featuredVendors.map(vendor=><Pressable key={vendor.id} accessibilityRole="button" accessibilityHint={`Opens the ${vendor.name} menu`} onPress={()=>onOpen(vendor)} style={s.featuredCard}>
-            {vendor.image?<Image source={{uri:vendor.image}} style={s.featuredImage}/>:<View style={s.imageFallback}><Ionicons name="restaurant-outline" size={25} color={c.primary}/></View>}
+            <SafeItemImage storeImage={vendor.image} style={s.featuredImage} fallbackStyle={s.imageFallback} iconColor={c.primary} iconSize={25}/>
             <View style={s.featuredDetails}>
               <View style={s.vendorTitleRow}><Text numberOfLines={1} style={s.vendorTitle}>{vendor.name}</Text><View style={s.rating}><Ionicons name="star" size={12} color={c.accent}/><Text style={s.ratingText}>{vendor.rating?.toFixed(1)??'New'}</Text></View></View>
               <Text numberOfLines={1} style={s.meta}>{vendor.cuisine} · {vendor.neighborhood}</Text>
@@ -163,7 +221,7 @@ export default function HomeScreen({vendors,userLocation,popularProducts,popular
         :<View style={s.emptyState}><View accessibilityRole="image" accessibilityLabel="Empty basket illustration" style={s.emptyBasket}><EmptyBasketIllustration primary={c.primary} accent={c.accent}/></View><Text style={s.stateTitle}>No popular dishes yet</Text><Text style={s.stateText}>Dishes will appear here as nearby kitchens add their menus.</Text></View>
         :<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.popularList}>
           {popularProducts.slice(0,12).map(({product,vendor})=><Pressable key={`${vendor.id}:${product.id}`} accessibilityRole="button" accessibilityHint={`Browse ${vendor.name}'s menu`} onPress={()=>onOpen(vendor)} style={s.popularCard}>
-            {product.imageUrl?<Image source={{uri:product.imageUrl}} style={s.popularImage}/>:<View style={s.popularFallback}><Ionicons name="restaurant-outline" size={24} color={c.primary}/></View>}
+            <SafeItemImage productImage={product.imageUrl} storeImage={vendor.image} style={s.popularImage} fallbackStyle={s.popularFallback} iconColor={c.primary} iconSize={24}/>
             <Text numberOfLines={1} style={s.popularName}>{product.name}</Text><Text numberOfLines={1} style={s.popularVendor}>{vendor.name}</Text><Text style={s.popularPrice}>{money(product.priceMinor)}</Text>
           </Pressable>)}
         </ScrollView>}
@@ -176,7 +234,7 @@ export default function HomeScreen({vendors,userLocation,popularProducts,popular
       :!vendors.length?<View style={s.state}><View accessibilityRole="image" accessibilityLabel="Empty basket illustration" style={s.emptyBasket}><EmptyBasketIllustration primary={c.primary} accent={c.accent}/></View><Text style={s.stateTitle}>No places nearby yet</Text><Text style={s.stateText}>Try another category or check back later.</Text></View>:null}
     </>}
     renderItem={({item})=><Pressable accessibilityRole="button" accessibilityHint={`Opens the ${item.name} menu`} onPress={()=>onOpen(item)} style={({pressed})=>[s.vendorRow,pressed&&s.pressed]}>
-      {item.image?<Image source={{uri:item.image}} style={s.vendorImage}/>:<View style={s.vendorFallback}><Ionicons name="storefront-outline" size={23} color={c.primary}/></View>}
+      <SafeItemImage storeImage={item.image} style={s.vendorImage} fallbackStyle={s.vendorFallback} iconColor={c.primary} icon="storefront-outline" iconSize={23}/>
       <View style={s.vendorCopy}>
         <View style={s.vendorTitleRow}><Text style={s.vendorTitle} numberOfLines={1}>{item.name}</Text><View style={s.rating}><Ionicons name="star" size={12} color={c.accent}/><Text style={s.ratingText}>{item.rating?.toFixed(1)??'New'}</Text></View></View>
         <Text style={s.meta} numberOfLines={1}>{item.cuisine} · {item.neighborhood}</Text>
@@ -191,25 +249,28 @@ export default function HomeScreen({vendors,userLocation,popularProducts,popular
 
 const styles=(c:ReturnType<typeof customerPalette>)=>StyleSheet.create({
   list:{paddingBottom:customerSpace.lg,backgroundColor:c.canvas},
-  heroViewport:{marginHorizontal:customerSpace.lg,marginTop:customerSpace.lg,marginBottom:customerSpace.sm,borderRadius:customerRadius.lg,overflow:'hidden'},
-  heroCard:{height:160,justifyContent:'center',paddingHorizontal:customerSpace.lg,paddingVertical:customerSpace.sm},
-  whiteTextShadow:{textShadowColor:'rgba(70,32,0,.45)',textShadowOffset:{width:0,height:1},textShadowRadius:2},
-  eyebrow:{fontSize:9,lineHeight:14,fontWeight:'900',letterSpacing:1.5},
-  headline:{fontSize:30,lineHeight:34,fontWeight:'900',letterSpacing:-1.2,marginTop:6},
-  subhead:{maxWidth:290,fontSize:11,lineHeight:16,marginTop:6},
+  heroViewport:{marginHorizontal:customerSpace.lg,marginTop:customerSpace.lg,marginBottom:customerSpace.sm,borderRadius:customerRadius.lg,overflow:'hidden',borderWidth:1,borderColor:c.border,shadowColor:'#000',shadowOffset:{width:0,height:3},shadowOpacity:.06,shadowRadius:8,elevation:2},
+  heroCard:{height:164,justifyContent:'center',paddingHorizontal:customerSpace.lg,paddingVertical:customerSpace.sm,overflow:'hidden',position:'relative'},
+  heroOrb1:{position:'absolute',top:-32,right:-24,width:160,height:160,borderRadius:80},
+  heroOrb2:{position:'absolute',bottom:-36,right:50,width:110,height:110,borderRadius:55},
+  eyebrowBadge:{alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:customerRadius.pill,marginBottom:2},
+  eyebrow:{fontSize:9,lineHeight:13,fontWeight:'900',letterSpacing:1.2},
+  headline:{fontSize:28,lineHeight:32,fontWeight:'900',letterSpacing:-1,marginTop:4},
+  subhead:{maxWidth:270,fontSize:11,lineHeight:16,marginTop:5},
+  whiteTextShadow:{textShadowColor:'rgba(0,0,0,.15)',textShadowOffset:{width:0,height:1},textShadowRadius:3},
   slideCount:{position:'absolute',right:customerSpace.lg,bottom:customerSpace.md,fontSize:9,fontWeight:'900',letterSpacing:1},
   pagination:{position:'absolute',bottom:customerSpace.md,left:customerSpace.lg,flexDirection:'row',alignItems:'center',gap:6},
   paginationDot:{width:6,height:6,borderRadius:3},
-  paginationDotActive:{width:20},
+  paginationDotActive:{width:18},
   searchRow:{minHeight:54,flexDirection:'row',alignItems:'center',gap:10,paddingLeft:14,paddingRight:6,marginHorizontal:customerSpace.lg,borderWidth:1,borderColor:c.border,borderRadius:customerRadius.md,backgroundColor:c.surface},
   searchInput:{flex:1,minWidth:0,height:50,fontSize:14,color:c.ink},
   searchAction:{width:42,height:42,borderRadius:customerRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.primary},
-  categoryGrid:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between',rowGap:8,paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.md,paddingBottom:customerSpace.lg},
-  category:{width:'23%',minHeight:78,alignItems:'center',justifyContent:'flex-start',gap:5},
-  categoryIconBox:{width:48,height:48,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.md},
-  categorySelectedIconBox:{borderWidth:2,borderColor:c.primary},
-  categoryText:{fontSize:9,fontWeight:'800',color:c.ink,textAlign:'center'},
-  categoryTextSelected:{color:c.primary},
+  categoryGrid:{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between',rowGap:10,paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.md,paddingBottom:customerSpace.lg},
+  category:{width:'23%',minHeight:76,alignItems:'center',justifyContent:'flex-start',gap:6},
+  categoryIconBox:{width:50,height:50,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.md,borderWidth:1,borderColor:c.border},
+  categorySelectedIconBox:{borderColor:c.primary,borderWidth:2,shadowColor:c.primary,shadowOffset:{width:0,height:2},shadowOpacity:.15,shadowRadius:4,elevation:2},
+  categoryText:{fontSize:10,fontWeight:'700',color:c.ink,textAlign:'center'},
+  categoryTextSelected:{color:c.primary,fontWeight:'900'},
   section:{marginTop:customerSpace.md},
   sectionHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10,paddingHorizontal:customerSpace.lg,marginBottom:customerSpace.md},
   sectionHeadingList:{flexDirection:'row',alignItems:'flex-end',justifyContent:'space-between',gap:8,paddingHorizontal:customerSpace.lg,paddingTop:customerSpace.section,paddingBottom:customerSpace.sm},
