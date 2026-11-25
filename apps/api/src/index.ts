@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOfferStatus, SupportTicketCategory, SupportTicketStatus, Prisma } from '@prisma/client';
 import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { BASE_DELIVERY_FEE_MINOR, calculateDeliveryFeeMinor, calculateOrderAmounts, canVendorTransition, MIN_DELIVERY_FEE_MINOR, SERVICE_FEE_MINOR } from './order-rules.js';
+import { calculateDeliveryFeeMinor, calculateOrderAmounts, canVendorTransition, DEFAULT_PAYMENT_FEE_SETTINGS, resolvePaymentFeeSettings } from './order-rules.js';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
 import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
@@ -1167,13 +1167,16 @@ app.get('/api/v1/vendors',optionalUser,async (req:AuthRequest,res,next) => {
     };
     const select={id:true,name:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{category:true,imageUrl:true},take:1}} as const;
     const source = catalogSource(req.auth?.demoAccess===true);
-    const rows = source==='database'?await prisma.vendor.findMany({where:buildWhere(false),orderBy:{name:'asc'},take:50,select}):await prisma.vendor.findMany({where:buildWhere(true),orderBy:{name:'asc'},take:50,select});
+    const [rows, paymentSettings] = await Promise.all([
+      source==='database'?prisma.vendor.findMany({where:buildWhere(false),orderBy:{name:'asc'},take:50,select}):prisma.vendor.findMany({where:buildWhere(true),orderBy:{name:'asc'},take:50,select}),
+      getPaymentFeeSettings(),
+    ]);
     const hasOrigin=input.data.latitude!==undefined&&input.data.longitude!==undefined;
     const data = rows.map(v=>{
       const vLat=v.latitude===null?null:Number(v.latitude);
       const vLng=v.longitude===null?null:Number(v.longitude);
       const estimatedMeters=hasOrigin&&vLat!==null&&vLng!==null?Math.round(distanceKm(input.data.latitude!,input.data.longitude!,vLat,vLng)*1000):null;
-      const feeMinor=estimatedMeters===null?BASE_DELIVERY_FEE_MINOR:calculateDeliveryFeeMinor(estimatedMeters);
+      const feeMinor=estimatedMeters===null?paymentSettings.baseDeliveryFeeMinor:calculateDeliveryFeeMinor(estimatedMeters,paymentSettings);
       return {id:v.id,name:v.name,cuisine:v.products[0]?.category??'Local store',neighborhood:v.address,eta:'Estimate at checkout',fee:Math.round(feeMinor/100),rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:vLat,longitude:vLng};
     });
     return res.json({data,meta:{source,total:data.length}});
@@ -1194,10 +1197,32 @@ const orderItemsSchema = z.array(z.object({productId:z.string().min(1),quantity:
 const quoteOrderSchema = z.object({vendorId:z.string().min(1),addressId:z.string().min(1),items:orderItemsSchema}).refine(v=>new Set(v.items.map(x=>x.productId)).size===v.items.length,{message:'Each product may appear only once.'}).refine(v=>v.items.every(item=>new Set((item.addons??[]).map(addon=>addon.addonId)).size===(item.addons??[]).length),{message:'Each product extra may appear only once per item.'});
 const createOrderSchema = z.object({vendorId:z.string().min(1),addressId:z.string().min(1),deliveryNotes:z.string().max(500).optional(),idempotencyKey:z.string().uuid(),items:orderItemsSchema}).refine(v=>new Set(v.items.map(x=>x.productId)).size===v.items.length,{message:'Each product may appear only once.'}).refine(v=>v.items.every(item=>new Set((item.addons??[]).map(addon=>addon.addonId)).size===(item.addons??[]).length),{message:'Each product extra may appear only once per item.'});
 
+async function getPaymentFeeSettings(db: PrismaClient | Prisma.TransactionClient = prisma) {
+  const row = await db.paymentSettings.findUnique({
+    where: { id: 'default' },
+    select: {
+      baseDeliveryFeeMinor: true,
+      deliveryFeePerKmMinor: true,
+      serviceFeeMinor: true,
+      updatedAt: true,
+      updatedBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+  const fees = resolvePaymentFeeSettings(row);
+  return {
+    ...fees,
+    isDefault: !row,
+    defaults: DEFAULT_PAYMENT_FEE_SETTINGS,
+    updatedAt: row?.updatedAt ?? null,
+    updatedBy: row?.updatedBy ?? null,
+  };
+}
+
 async function prepareOrderQuote(userId:string,demoAccess:boolean,input:{vendorId:string;addressId:string;items:z.infer<typeof orderItemsSchema>}) {
-  const [vendor,address] = await Promise.all([
+  const [vendor,address,paymentSettings] = await Promise.all([
     prisma.vendor.findFirst({where:{id:input.vendorId,status:VendorStatus.APPROVED,isOpen:true}}),
-    prisma.address.findFirst({where:{id:input.addressId,userId}})
+    prisma.address.findFirst({where:{id:input.addressId,userId}}),
+    getPaymentFeeSettings(),
   ]);
   if(!vendor) throw Object.assign(new Error('This kitchen cannot accept orders right now.'),{status:409,code:'VENDOR_UNAVAILABLE'});
   if(vendor.isDemo&&!demoAccess) throw Object.assign(new Error('This kitchen cannot accept orders right now.'),{status:404,code:'VENDOR_UNAVAILABLE'});
@@ -1214,10 +1239,10 @@ async function prepareOrderQuote(userId:string,demoAccess:boolean,input:{vendorI
   const addons=addonIds.length?await prisma.productAddon.findMany({where:{id:{in:addonIds},available:true,productId:{in:ids}}}):[];
   for(const item of input.items)for(const choice of item.addons??[])if(!addons.some(addon=>addon.id===choice.addonId&&addon.productId===item.productId))throw Object.assign(new Error('A selected extra is no longer available for this item.'),{status:409,code:'ADDON_UNAVAILABLE'});
   const deliveryDistanceMeters=await estimateRouteDistanceMeters(vendor,address);
-  const deliveryFeeMinor=deliveryDistanceMeters===null?MIN_DELIVERY_FEE_MINOR:calculateDeliveryFeeMinor(deliveryDistanceMeters);
+  const deliveryFeeMinor=deliveryDistanceMeters===null?paymentSettings.baseDeliveryFeeMinor:calculateDeliveryFeeMinor(deliveryDistanceMeters,paymentSettings);
   let amounts:{subtotalMinor:number;deliveryFeeMinor:number;serviceFeeMinor:number;totalMinor:number};
   try {
-    amounts=calculateOrderAmounts(input.items.map(item=>({priceMinor:products.find(p=>p.id===item.productId)!.priceMinor,quantity:item.quantity,addons:(item.addons??[]).map(choice=>({priceMinor:addons.find(addon=>addon.id===choice.addonId)!.priceMinor,quantity:choice.quantity}))})),deliveryFeeMinor,SERVICE_FEE_MINOR);
+    amounts=calculateOrderAmounts(input.items.map(item=>({priceMinor:products.find(p=>p.id===item.productId)!.priceMinor,quantity:item.quantity,addons:(item.addons??[]).map(choice=>({priceMinor:addons.find(addon=>addon.id===choice.addonId)!.priceMinor,quantity:choice.quantity}))})),deliveryFeeMinor,paymentSettings.serviceFeeMinor);
   } catch {
     throw Object.assign(new Error('Order total is outside the supported range.'),{status:400,code:'ORDER_TOTAL_INVALID'});
   }
@@ -1891,6 +1916,56 @@ app.post('/api/v1/admin/orders/:orderId/refund',requireUser,requireAdminPermissi
     }
     const result=await initiatePaystackRefundForOrder({orderId:order.id,paymentId:txOutcome.paymentId,providerReference:txOutcome.providerReference,amountMinor:txOutcome.amountMinor,actorId:req.auth!.userId,reason:input.data.reason});
     return res.status(result.status==='processed'?200:202).json({data:{orderId:order.id,status:result.status==='processed'?OrderStatus.REFUNDED:OrderStatus.REFUND_PENDING,method:'paystack',refundStatus:result.status}});
+  }catch(error){return next(error);}
+});
+app.get('/api/v1/admin/payment-settings',requireUser,requireAdminPermission('finance.read'),async(_req,res,next)=>{
+  try{
+    return res.json({data:await getPaymentFeeSettings()});
+  }catch(error){return next(error);}
+});
+app.put('/api/v1/admin/payment-settings',requireUser,requireAdminPermission('finance.manage'),async(req:AuthRequest,res,next)=>{
+  const input=z.object({
+    baseDeliveryFeeMinor:z.number().int().min(0).max(5_000_000),
+    deliveryFeePerKmMinor:z.number().int().min(0).max(1_000_000),
+    serviceFeeMinor:z.number().int().min(0).max(5_000_000),
+    reason:z.string().trim().max(500).optional(),
+  }).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_PAYMENT_SETTINGS',message:'Enter valid non-negative fee amounts in minor units.'}});
+  const reason=input.data.reason?.trim()||'Updated platform payment fee settings';
+  try{
+    const updated=await prisma.$transaction(async tx=>{
+      const current=await getPaymentFeeSettings(tx);
+      const nextValues={
+        baseDeliveryFeeMinor:input.data.baseDeliveryFeeMinor,
+        deliveryFeePerKmMinor:input.data.deliveryFeePerKmMinor,
+        serviceFeeMinor:input.data.serviceFeeMinor,
+      };
+      await tx.paymentSettings.upsert({
+        where:{id:'default'},
+        create:{id:'default',...nextValues,updatedById:req.auth!.userId},
+        update:{...nextValues,updatedById:req.auth!.userId},
+      });
+      await tx.auditLog.create({
+        data:{
+          actorId:req.auth!.userId,
+          action:'ADMIN_PAYMENT_SETTINGS_UPDATED',
+          targetType:'PaymentSettings',
+          targetId:'default',
+          metadata:{
+            previous:{
+              baseDeliveryFeeMinor:current.baseDeliveryFeeMinor,
+              deliveryFeePerKmMinor:current.deliveryFeePerKmMinor,
+              serviceFeeMinor:current.serviceFeeMinor,
+            },
+            next:nextValues,
+            reason,
+          },
+          isDemo:false,
+        },
+      });
+      return getPaymentFeeSettings(tx);
+    });
+    return res.json({data:updated});
   }catch(error){return next(error);}
 });
 app.get('/api/v1/admin/applications',requireUser,async(req:AuthRequest,res,next)=>{

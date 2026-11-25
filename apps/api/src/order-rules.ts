@@ -6,6 +6,35 @@ export const DELIVERY_FEE_PER_KM_MINOR = 15_000;
 export const MIN_DELIVERY_FEE_MINOR = 50_000;
 export const DELIVERY_FEE_ROUNDING_MINOR = 5_000;
 
+export type PaymentFeeSettings = {
+  baseDeliveryFeeMinor: number;
+  deliveryFeePerKmMinor: number;
+  serviceFeeMinor: number;
+};
+
+export const DEFAULT_PAYMENT_FEE_SETTINGS: PaymentFeeSettings = {
+  baseDeliveryFeeMinor: BASE_DELIVERY_FEE_MINOR,
+  deliveryFeePerKmMinor: DELIVERY_FEE_PER_KM_MINOR,
+  serviceFeeMinor: SERVICE_FEE_MINOR,
+};
+
+export function resolvePaymentFeeSettings(row?: Partial<PaymentFeeSettings> | null): PaymentFeeSettings {
+  return {
+    baseDeliveryFeeMinor:
+      typeof row?.baseDeliveryFeeMinor === 'number' && Number.isSafeInteger(row.baseDeliveryFeeMinor) && row.baseDeliveryFeeMinor >= 0
+        ? row.baseDeliveryFeeMinor
+        : BASE_DELIVERY_FEE_MINOR,
+    deliveryFeePerKmMinor:
+      typeof row?.deliveryFeePerKmMinor === 'number' && Number.isSafeInteger(row.deliveryFeePerKmMinor) && row.deliveryFeePerKmMinor >= 0
+        ? row.deliveryFeePerKmMinor
+        : DELIVERY_FEE_PER_KM_MINOR,
+    serviceFeeMinor:
+      typeof row?.serviceFeeMinor === 'number' && Number.isSafeInteger(row.serviceFeeMinor) && row.serviceFeeMinor >= 0
+        ? row.serviceFeeMinor
+        : SERVICE_FEE_MINOR,
+  };
+}
+
 const vendorTransitions:Partial<Record<VendorOrderStatus,VendorOrderStatus[]>>={
   CONFIRMED:['ACCEPTED_BY_VENDOR','REJECTED'],
   ACCEPTED_BY_VENDOR:['PREPARING'],
@@ -17,14 +46,25 @@ export function canVendorTransition(from:string,to:string):boolean {
 }
 
 /** Calculates the distance-based rider fee in minor units (kobo) rounded to the nearest ₦50. */
-export function calculateDeliveryFeeMinor(distanceMeters: number): number {
+export function calculateDeliveryFeeMinor(
+  distanceMeters: number,
+  settings?: Partial<Pick<PaymentFeeSettings, 'baseDeliveryFeeMinor' | 'deliveryFeePerKmMinor'>>,
+): number {
   if (!Number.isFinite(distanceMeters) || distanceMeters < 0) {
     throw new RangeError('Invalid delivery distance.');
   }
+  const baseFeeMinor = settings?.baseDeliveryFeeMinor ?? BASE_DELIVERY_FEE_MINOR;
+  const perKmFeeMinor = settings?.deliveryFeePerKmMinor ?? DELIVERY_FEE_PER_KM_MINOR;
+  if (!Number.isSafeInteger(baseFeeMinor) || baseFeeMinor < 0) {
+    throw new RangeError('Invalid base delivery fee.');
+  }
+  if (!Number.isSafeInteger(perKmFeeMinor) || perKmFeeMinor < 0) {
+    throw new RangeError('Invalid per-kilometer delivery fee.');
+  }
   const distanceKm = distanceMeters / 1000;
-  const rawMinor = BASE_DELIVERY_FEE_MINOR + distanceKm * DELIVERY_FEE_PER_KM_MINOR;
+  const rawMinor = baseFeeMinor + distanceKm * perKmFeeMinor;
   const roundedMinor = Math.round(rawMinor / DELIVERY_FEE_ROUNDING_MINOR) * DELIVERY_FEE_ROUNDING_MINOR;
-  return Math.max(MIN_DELIVERY_FEE_MINOR, roundedMinor);
+  return Math.max(baseFeeMinor, roundedMinor);
 }
 
 /** Computes server-authoritative order subtotal, fees, and customer total in minor units. */

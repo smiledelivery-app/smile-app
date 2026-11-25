@@ -100,6 +100,7 @@ model User {
   supportTicketsAssigned SupportTicket[] @relation("SupportTicketAssignee")
   notifications Notification[]
   pushDevices PushDevice[]
+  paymentSettingsUpdates PaymentSettings[]
 }
 
 model PendingPhoneSignup {
@@ -481,4 +482,15 @@ model SupportTicket {
   @@index([customerId, createdAt])
   @@index([orderId])
   @@index([assignedAdminId, status])
+}
+
+model PaymentSettings {
+  id                    String   @id @default("default")
+  baseDeliveryFeeMinor  Int      @default(50000)
+  deliveryFeePerKmMinor Int      @default(15000)
+  serviceFeeMinor       Int      @default(50000)
+  updatedById           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  updatedBy             User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 }

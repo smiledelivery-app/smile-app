@@ -21,7 +21,8 @@
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:seed:demo": "tsx prisma/seed.ts",
     "db:seed:admin": "tsx prisma/seed-admin.ts",
-    "db:bootstrap:admin": "tsx prisma/seed-admin.ts --production-bootstrap"
+    "db:bootstrap:admin": "tsx prisma/seed-admin.ts --production-bootstrap",
+    "db:clear": "tsx prisma/clear-db.ts"
   },
   "devDependencies": { "@prisma/client": "^6.5.0", "concurrently": "^9.1.2", "dotenv": "^16.4.7", "prisma": "^6.5.0", "tsx": "^4.19.3", "typescript": "^5.8.2" }
 }

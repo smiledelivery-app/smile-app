@@ -2,7 +2,7 @@
 
 import {
   BadgeDollarSign, Bike, BellRing, Check, ChevronDown, CircleAlert, ClipboardList, CreditCard, LayoutDashboard, LogOut,
-  MessageSquareWarning, Search, ShieldCheck, Store, UserCog, Users,
+  MessageSquareWarning, Search, ShieldCheck, SlidersHorizontal, Store, UserCog, Users,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -17,11 +17,12 @@ import { Card } from '@/components/ui/card';
 import { AccessView } from '@/app/access-view';
 import { DisputesView } from '@/app/disputes-view';
 import { NotificationsView } from '@/app/notifications-view';
+import { PaymentSettingsView } from '@/app/payment-settings-view';
 import { api, getToken, queryString, setToken } from '@/lib/api';
 
 type Role = 'ADMIN' | 'SUPER_ADMIN' | 'OPERATIONS_MANAGER' | 'FINANCE_ADMIN' | 'CUSTOMER_SUPPORT' | 'VENDOR_MANAGER' | 'RIDER_MANAGER' | 'MARKETING_MANAGER' | 'ANALYST' | 'READ_ONLY_ADMIN';
 type AdminUser = { userId: string; roles: Role[] };
-type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'disputes' | 'audit' | 'access' | 'notifications';
+type View = 'overview' | 'orders' | 'customers' | 'vendors' | 'riders' | 'transactions' | 'payment-settings' | 'disputes' | 'audit' | 'access' | 'notifications';
 type Overview = {
   orders: number; completedOrders: number; activeOrders: number; pendingOrders: number; cancelledOrders: number;
   gmvMinor: number; deliveryFeesMinor: number; collectedPaymentsMinor: number; platformRevenueMinor: number | null;
@@ -47,6 +48,7 @@ const routeViews: Record<string, View> = {
   '/vendors': 'vendors',
   '/riders': 'riders',
   '/transactions': 'transactions',
+  '/payment-settings': 'payment-settings',
   '/disputes': 'disputes',
   '/audit': 'audit',
   '/access': 'access',
@@ -59,6 +61,7 @@ const viewRoutes: Record<View, string> = {
   vendors: '/vendors',
   riders: '/riders',
   transactions: '/transactions',
+  'payment-settings': '/payment-settings',
   disputes: '/disputes',
   audit: '/audit',
   access: '/access',
@@ -71,22 +74,23 @@ const navItems: Array<{ id: View; label: string; icon: typeof LayoutDashboard }>
   { id: 'vendors', label: 'Vendors', icon: Store },
   { id: 'riders', label: 'Riders', icon: Bike },
   { id: 'transactions', label: 'Transactions', icon: CreditCard },
+  { id: 'payment-settings', label: 'Payment settings', icon: SlidersHorizontal },
   { id: 'disputes', label: 'Disputes & resolution', icon: MessageSquareWarning },
   { id: 'audit', label: 'Audit log', icon: ShieldCheck },
   { id: 'access', label: 'Access & sessions', icon: UserCog },
   { id: 'notifications', label: 'Push notifications', icon: BellRing },
 ];
 const roleCapabilities: Record<Role, View[]> = {
-  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access', 'notifications'],
-  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit', 'access', 'notifications'],
+  ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'payment-settings', 'disputes', 'audit', 'access', 'notifications'],
+  SUPER_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'payment-settings', 'disputes', 'audit', 'access', 'notifications'],
   OPERATIONS_MANAGER: ['overview', 'orders', 'vendors', 'riders', 'disputes'],
-  FINANCE_ADMIN: ['overview', 'transactions'],
+  FINANCE_ADMIN: ['overview', 'transactions', 'payment-settings'],
   CUSTOMER_SUPPORT: ['overview', 'orders', 'customers', 'disputes'],
   VENDOR_MANAGER: ['overview', 'vendors'],
   RIDER_MANAGER: ['overview', 'riders'],
   MARKETING_MANAGER: ['overview'],
-  ANALYST: ['overview', 'orders', 'transactions'],
-  READ_ONLY_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'disputes', 'audit'],
+  ANALYST: ['overview', 'orders', 'transactions', 'payment-settings'],
+  READ_ONLY_ADMIN: ['overview', 'orders', 'customers', 'vendors', 'riders', 'transactions', 'payment-settings', 'disputes', 'audit'],
 };
 const money = (minor: number | null | undefined) => minor == null ? '—' : new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(minor / 100);
 const dateLabel = (date: string) => new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(date));
@@ -249,7 +253,8 @@ export default function AdminPage() {
         <div className="page-content">
           {notice && <div className={`notice-banner ${noticeError ? 'notice-error' : ''}`} role={noticeError ? 'alert' : 'status'}>{noticeError ? <CircleAlert size={16} /> : <Check size={16} />}{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
           {view === 'overview' && <OverviewView data={overviewQuery.data} error={overviewQuery.error} loading={overviewQuery.isLoading} period={period} setPeriod={setPeriod} fromDate={fromDate} toDate={toDate} setFromDate={setFromDate} setToDate={setToDate} />}
-          {view !== 'overview' && view !== 'audit' && view !== 'access' && view !== 'disputes' && view !== 'notifications' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
+          {view !== 'overview' && view !== 'payment-settings' && view !== 'audit' && view !== 'access' && view !== 'disputes' && view !== 'notifications' && <ListView view={view} query={listQuery} search={search} setSearch={value => { setSearch(value); setPage(1); }} statusFilter={statusFilter} setStatusFilter={value => { setStatusFilter(value); setPage(1); }} page={page} setPage={setPage} canReview={canReview} runReview={runReview} orderFilters={orderFilters} setOrderFilters={filters => { setOrderFilters(filters); setPage(1); }} />}
+          {view === 'payment-settings' && <PaymentSettingsView canManage={user.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'FINANCE_ADMIN')} />}
           {view === 'audit' && <AuditView query={auditQuery} />}
           {view === 'access' && <AccessView />}
           {view === 'disputes' && <DisputesView userId={user.userId} canManage={user.roles.some(role => role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OPERATIONS_MANAGER' || role === 'CUSTOMER_SUPPORT')} />}
@@ -310,7 +315,7 @@ function OverviewView({ data, error, loading, period, setPeriod, fromDate, toDat
           <div className="panel-heading"><div><p className="eyebrow">FINANCIAL SNAPSHOT</p><h2>Collected &amp; fees</h2></div><BadgeDollarSign size={19} className="muted-icon" /></div>
           <div className="finance-row"><div><span>Successful payments</span><small>Recorded collections · non-demo</small></div><strong>{money(data?.collectedPaymentsMinor)}</strong></div>
           <div className="finance-row"><div><span>Delivery fees</span><small>Customer fees on delivered orders</small></div><strong>{money(data?.deliveryFeesMinor)}</strong></div>
-          <div className="finance-row"><div><span>Platform revenue</span><small>₦500 service fees · delivered orders</small></div><strong>{money(data?.platformRevenueMinor)}</strong></div>
+          <div className="finance-row"><div><span>Platform revenue</span><small>Service fees · delivered orders</small></div><strong>{money(data?.platformRevenueMinor)}</strong></div>
           <div className="finance-row"><div><span>Rider earnings</span><small>Distance delivery fees · delivered orders</small></div><strong>{money(data?.riderEarningsMinor)}</strong></div>
           <p className="definition-note">Collected payments, GMV, delivery fees, platform revenue, and rider earnings are distinct measures. This API does not infer missing ledger values.</p>
         </Card>
@@ -330,7 +335,7 @@ function PageHeading({ eyebrow, title, description, children }: { eyebrow: strin
 }
 
 function ListView({ view, query, search, setSearch, statusFilter, setStatusFilter, page, setPage, canReview, runReview, orderFilters, setOrderFilters }: {
-  view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes' | 'notifications'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
+  view: Exclude<View, 'overview' | 'payment-settings' | 'audit' | 'access' | 'disputes' | 'notifications'>; query: UseQueryResult<PageResult<Order | Customer | Vendor | Rider | Transaction>, Error>; search: string;
   setSearch: (value: string) => void; statusFilter: string; setStatusFilter: (value: string) => void; page: number; setPage: (page: number) => void;
   orderFilters: OrderFilters; setOrderFilters: (filters: OrderFilters) => void;
   canReview: (permission: 'vendors' | 'riders') => boolean | undefined;
@@ -382,7 +387,7 @@ function OrderFilterBar({ filters, onChange }: { filters: OrderFilters; onChange
   </div>;
 }
 
-function TableHead({ view }: { view: Exclude<View, 'overview' | 'audit' | 'access' | 'disputes' | 'notifications'> }) {
+function TableHead({ view }: { view: Exclude<View, 'overview' | 'payment-settings' | 'audit' | 'access' | 'disputes' | 'notifications'> }) {
   const columns: Record<typeof view, string[]> = {
     orders: ['ORDER', 'CUSTOMER', 'VENDOR', 'PLACED', 'STATUS', 'RIDER', 'TOTAL', ''],
     customers: ['CUSTOMER', 'EMAIL', 'PHONE', 'ORDERS', 'ADDRESSES', 'WALLET BALANCE', 'JOINED'],

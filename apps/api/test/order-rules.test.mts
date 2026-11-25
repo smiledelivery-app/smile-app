@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { calculateOrderAmounts, canVendorTransition } from '../src/order-rules.ts';
+import {
+  BASE_DELIVERY_FEE_MINOR,
+  calculateDeliveryFeeMinor,
+  calculateOrderAmounts,
+  canVendorTransition,
+  DEFAULT_PAYMENT_FEE_SETTINGS,
+  DELIVERY_FEE_PER_KM_MINOR,
+  resolvePaymentFeeSettings,
+  SERVICE_FEE_MINOR,
+} from '../src/order-rules.ts';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from '../src/catalog-rules.ts';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from '../src/dispatch-rules.ts';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from '../src/google-maps.ts';
@@ -29,6 +38,22 @@ test('checkout rejects invalid lines and totals outside the database integer ran
 test('checkout multiplies per-item addon quantities and menu item quantities in integer minor units',()=>{
   assert.deepEqual(calculateOrderAmounts([{priceMinor:50_000,quantity:2,addons:[{priceMinor:50_000,quantity:2}]}],80_000),{subtotalMinor:300_000,deliveryFeeMinor:80_000,serviceFeeMinor:50_000,totalMinor:430_000});
   assert.throws(()=>calculateOrderAmounts([{priceMinor:50_000,quantity:1,addons:[{priceMinor:0,quantity:1}]}],80),RangeError);
+});
+
+test('payment fee settings default to existing platform constants and drive delivery and service fee calculations',()=>{
+  assert.deepEqual(resolvePaymentFeeSettings(null),DEFAULT_PAYMENT_FEE_SETTINGS);
+  assert.deepEqual(resolvePaymentFeeSettings(undefined),{
+    baseDeliveryFeeMinor:BASE_DELIVERY_FEE_MINOR,
+    deliveryFeePerKmMinor:DELIVERY_FEE_PER_KM_MINOR,
+    serviceFeeMinor:SERVICE_FEE_MINOR,
+  });
+  assert.equal(calculateDeliveryFeeMinor(3000),95_000);
+  assert.equal(calculateDeliveryFeeMinor(3000,{baseDeliveryFeeMinor:75_000,deliveryFeePerKmMinor:20_000}),135_000);
+  assert.equal(calculateDeliveryFeeMinor(500,{baseDeliveryFeeMinor:30_000,deliveryFeePerKmMinor:10_000}),35_000);
+  assert.deepEqual(
+    calculateOrderAmounts([{priceMinor:200_000,quantity:1}],75_000,85_000),
+    {subtotalMinor:200_000,deliveryFeeMinor:75_000,serviceFeeMinor:85_000,totalMinor:360_000},
+  );
 });
 
 test('only the Smile test account accesses demo features outside production, independent of global demo mode',()=>{
