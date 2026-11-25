@@ -1,4 +1,5 @@
 import { AppText as Text } from '@makanza/mobile-ui';
+import type { OrderQuote } from '@makanza/mobile-core';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '../components/AppIcon';
 import type { CartLine } from '../types/cart';
@@ -10,6 +11,8 @@ type Props = {
   onClose: () => void;
   lines: CartLine[];
   subtotal: number;
+  quote?: OrderQuote | null;
+  quoteLoading?: boolean;
   address: string;
   locationLabel: string;
   hasPinnedLocation: boolean;
@@ -126,12 +129,29 @@ export default function CartScreen(p: Props) {
                 <View style={s.summary}>
                   <View style={s.summaryLine}>
                     <Text style={s.summaryLabel}>Food subtotal</Text>
-                    <Text style={s.summaryValue}>{money(p.subtotal)}</Text>
+                    <Text style={s.summaryValue}>{money(p.quote?.subtotalMinor ?? p.subtotal)}</Text>
                   </View>
-                  <View style={s.feeNote}>
-                    <Ionicons name="information-circle-outline" size={17} color={c.muted} />
-                    <Text style={s.feeText}>Delivery fee and final total are confirmed at checkout.</Text>
-                  </View>
+                  {p.quote ? (
+                    <>
+                      <View style={[s.summaryLine, { marginTop: 7 }]}>
+                        <Text style={s.feeText}>Rider delivery fee{typeof p.quote.deliveryDistanceMeters === 'number' ? ` (${(p.quote.deliveryDistanceMeters / 1000).toFixed(1)} km)` : ''}</Text>
+                        <Text style={s.summaryValue}>{money(p.quote.deliveryFeeMinor)}</Text>
+                      </View>
+                      <View style={[s.summaryLine, { marginTop: 5 }]}>
+                        <Text style={s.feeText}>Service charge</Text>
+                        <Text style={s.summaryValue}>{money(p.quote.serviceFeeMinor)}</Text>
+                      </View>
+                      <View style={[s.summaryLine, { marginTop: 9, paddingTop: 9, borderTopWidth: 1, borderTopColor: c.border }]}>
+                        <Text style={s.summaryLabel}>Estimated total</Text>
+                        <Text style={s.summaryValue}>{money(p.quote.totalMinor)}</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <View style={s.feeNote}>
+                      <Ionicons name="information-circle-outline" size={17} color={c.muted} />
+                      <Text style={s.feeText}>{p.quoteLoading ? 'Calculating delivery fee and service charge…' : 'Delivery fee and final total are confirmed at checkout.'}</Text>
+                    </View>
+                  )}
                 </View>
 
                 <View style={s.sectionHeading}>

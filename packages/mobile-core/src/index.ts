@@ -44,6 +44,21 @@ export function createApiClient(baseUrl:string) {
   };
 }
 
+export const SERVICE_FEE_MINOR = 50_000;
+export const BASE_DELIVERY_FEE_MINOR = 50_000;
+export const DELIVERY_FEE_PER_KM_MINOR = 15_000;
+export const MIN_DELIVERY_FEE_MINOR = 50_000;
+export const DELIVERY_FEE_ROUNDING_MINOR = 5_000;
+
+export function estimateDeliveryFeeMinorFromKm(distanceKm: number | null | undefined): number {
+  if (distanceKm === null || distanceKm === undefined || !Number.isFinite(distanceKm) || distanceKm < 0) {
+    return MIN_DELIVERY_FEE_MINOR;
+  }
+  const rawMinor = BASE_DELIVERY_FEE_MINOR + distanceKm * DELIVERY_FEE_PER_KM_MINOR;
+  const roundedMinor = Math.round(rawMinor / DELIVERY_FEE_ROUNDING_MINOR) * DELIVERY_FEE_ROUNDING_MINOR;
+  return Math.max(MIN_DELIVERY_FEE_MINOR, roundedMinor);
+}
+
 export type Session = { token:string; expiresAt:string; user:{id:string;name:string;email:string|null;phone?:string|null;roles:string[];isDemo?:boolean} };
 export function formatOrderNumber(displayNumber:number|null|undefined,id=''):string {
   return displayNumber && displayNumber>0 ? `#${String(displayNumber).padStart(9,'0')}` : id ? `#${id.slice(-8).toUpperCase()}` : '#000000000';
@@ -53,11 +68,12 @@ export type NotificationInbox = {items:NotificationInboxItem[];unreadCount:numbe
 export type Vendor = {id:string;name:string;cuisine:string;neighborhood:string;eta:string;fee:number;rating:number|null;image:string;open:boolean;demo:boolean;latitude?:number|null;longitude?:number|null};
 export type ProductAddon = {id:string;productId:string;name:string;priceMinor:number;available:boolean};
 export type Product = {id:string;name:string;description:string;category:string;priceMinor:number;imageUrl:string|null;stock:number|null;addons?:ProductAddon[]};
+export type OrderQuote = {subtotalMinor:number;deliveryFeeMinor:number;serviceFeeMinor:number;totalMinor:number;deliveryDistanceMeters:number|null};
 export type OrderItemAddon = {id:string;nameSnapshot:string;unitPriceMinor:number;quantity:number};
 export type OrderItem = {id:string;nameSnapshot:string;quantity:number;unitPriceMinor:number;addons?:OrderItemAddon[]};
 export type OrderTracking = {deliveryId:string;deliveryStatus:string;vendor:{name:string;latitude:number|null;longitude:number|null};customer:{latitude:number|null;longitude:number|null};rider:{latitude:number;longitude:number;updatedAt:string}|null;riderContact?:{name:string;phone:string|null;vehicleType:string|null}|null};
-export type CustomerOrder = {id:string;displayNumber?:number|null;status:string;totalMinor:number;createdAt:string;deliveryCode?:string|null;tracking?:OrderTracking|null;delivery?:{status:string;assignedAt:string|null;riderName:string|null;riderPhone?:string|null;riderVehicleType?:string|null}|null;items:OrderItem[];vendor?:{name:string};events:{id:string;status:string;createdAt:string;note?:string|null}[]};
-export type VendorOrder = {id:string;displayNumber?:number|null;status:string;totalMinor:number;createdAt:string;items:OrderItem[];events:{id:string;status:string;createdAt:string}[];delivery?:{status:string;assignedAt:string|null;riderName:string|null;pickupVerified:boolean}|null};
+export type CustomerOrder = {id:string;displayNumber?:number|null;status:string;subtotalMinor?:number;deliveryFeeMinor?:number;serviceFeeMinor?:number;deliveryDistanceMeters?:number|null;totalMinor:number;createdAt:string;deliveryCode?:string|null;tracking?:OrderTracking|null;delivery?:{status:string;assignedAt:string|null;riderName:string|null;riderPhone?:string|null;riderVehicleType?:string|null}|null;items:OrderItem[];vendor?:{name:string};events:{id:string;status:string;createdAt:string;note?:string|null}[]};
+export type VendorOrder = {id:string;displayNumber?:number|null;status:string;subtotalMinor?:number;deliveryFeeMinor?:number;serviceFeeMinor?:number;deliveryDistanceMeters?:number|null;totalMinor:number;createdAt:string;items:OrderItem[];events:{id:string;status:string;createdAt:string}[];delivery?:{status:string;assignedAt:string|null;riderName:string|null;pickupVerified:boolean}|null};
 export type RiderProfile = {id:string;status:string;available:boolean;vehicleType:string|null;serviceArea:string;profileImageUrl?:string|null;location:{updatedAt:string}|null};
-export type RiderOffer = {id:string;deliveryId:string;expiresAt:string;pickupDistanceKm:number|null;vendor:{name:string;address:string};dropoffCity:string;itemCount:number;totalMinor:number};
-export type RiderDelivery = {id:string;status:string;pickupCode:string|null;order:{id:string;status:string;vendor:{id:string;name:string;address:string;latitude:number|string|null;longitude:number|string|null};address:{line1:string;city:string;latitude:number|string|null;longitude:number|string|null}|null;customer?:{name:string;phone:string|null}|null;items:OrderItem[]}};
+export type RiderOffer = {id:string;deliveryId:string;expiresAt:string;pickupDistanceKm:number|null;deliveryFeeMinor:number;deliveryDistanceMeters?:number|null;vendor:{name:string;address:string};dropoffCity:string;itemCount:number;totalMinor:number};
+export type RiderDelivery = {id:string;status:string;pickupCode:string|null;createdAt?:string;assignedAt?:string|null;pickedUpAt?:string|null;deliveredAt?:string|null;order:{id:string;displayNumber?:number|null;status:string;subtotalMinor?:number;deliveryFeeMinor?:number;serviceFeeMinor?:number;deliveryDistanceMeters?:number|null;totalMinor?:number;vendor:{id:string;name:string;address:string;latitude:number|string|null;longitude:number|string|null};address:{line1:string;city:string;latitude:number|string|null;longitude:number|string|null}|null;customer?:{name:string;phone:string|null}|null;items:OrderItem[]}};

@@ -1,0 +1,3 @@
+ALTER TABLE "Order"
+ADD COLUMN "serviceFeeMinor" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "deliveryDistanceMeters" INTEGER;

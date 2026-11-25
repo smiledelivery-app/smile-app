@@ -65,6 +65,7 @@ export default function App(){
   const [vehicleType,setVehicleType]=useState('');const [serviceArea,setServiceArea]=useState('');const [termsAccepted,setTermsAccepted]=useState(false);
   const [riderApplication,setRiderApplication]=useState({dateOfBirth:'',nin:'',ninDocumentPublicId:'',ninDocumentVersion:'',ninDocumentName:'',profileImagePublicId:'',profileImageUrl:'',plateNumber:'',residentialAddress:'',guarantorName:'',guarantorNin:'',guarantorAddress:'',accountNumber:'',bankCode:''});
   const [completionCodes,setCompletionCodes]=useState<Record<string,string>>({});
+  const [activeDeliverySignal,setActiveDeliverySignal]=useState(0);
   const [loading,setLoading]=useState(false);const [busy,setBusy]=useState('');const [error,setError]=useState('');const [notice,setNotice]=useState('');const [locationMessage,setLocationMessage]=useState('');
   const [locationSharing,setLocationSharing]=useState(false);
   const [locationPermissionNeeded,setLocationPermissionNeeded]=useState(false);
@@ -75,14 +76,15 @@ export default function App(){
   const toggleTheme=()=>{const next=isDark?'light':'dark';setColorMode(next);void writeStorage('makanza-operations-theme-v1',next).catch(()=>undefined);};
   const token=session?.token;
 
+  const isPushPermitted=Platform.OS!=='web'&&!isRunningInExpoGo()&&process.env.EXPO_PUBLIC_ENABLE_PUSH!=='false';
   useEffect(()=>{
-    if(Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return;
+    if(!isPushPermitted)return;
     let active=true;
     void import('expo-notifications').then(Notifications=>{
       if(active)Notifications.setNotificationHandler({handleNotification:async()=>({shouldPlaySound:true,shouldSetBadge:true,shouldShowBanner:true,shouldShowList:true})});
     }).catch(reason=>{if(active)setNotice(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');});
     return()=>{active=false;};
-  },[]);
+  },[isPushPermitted]);
 
   useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(session)return false;if(selectedRole){setSelectedRole(null);setRole(null);setError('');void removeStorage('makanza-operations-work-role-v1').catch(()=>undefined);return true;}return false;});return()=>subscription.remove();  },[session,selectedRole]);
 
@@ -96,7 +98,7 @@ export default function App(){
   const readAllNotifications=useCallback(async()=>{if(!token)return;try{await api.patch('/notifications/read-all',{},token);const readAt=new Date().toISOString();setNotificationInbox(current=>({...current,unreadCount:0,items:current.items.map(item=>({...item,readAt}))}));}catch(reason){setNotificationsError(reason instanceof Error?reason.message:'Could not mark notifications read.');}},[token]);
 
   useEffect(()=>{
-    if(!token||Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return;
+    if(!token||!isPushPermitted)return;
     let active=true;
     void (async()=>{
       try{
@@ -105,19 +107,19 @@ export default function App(){
         let permission=await Notifications.getPermissionsAsync();
         if(!permission.granted)permission=await Notifications.requestPermissionsAsync();
         if(!permission.granted)return;
-        const projectId=process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
-        if(!projectId)throw new Error('Set EXPO_PUBLIC_EAS_PROJECT_ID in the mobile app build environment.');
+        const projectId=process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim()||'9b018d6b-6690-4a42-8c6a-c553fcb49119';
         const deviceToken=(await Notifications.getExpoPushTokenAsync({projectId})).data;
         await api.post('/notifications/devices',{token:deviceToken,platform:Platform.OS==='ios'?'ios':'android'},token);
         if(active)setPushToken(deviceToken);
       }catch(reason){if(active)setNotice(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');}
     })();
     return()=>{active=false;};
-  },[token]);
+  },[token,isPushPermitted]);
   useEffect(()=>{
     if(!token)return;
     const appState=AppState.addEventListener('change',state=>{if(state==='active')void loadNotifications(token,true);});
-    if(Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return()=>appState.remove();
+    const pollTimer=setInterval(()=>void loadNotifications(token,true),20000);
+    if(!isPushPermitted)return()=>{appState.remove();clearInterval(pollTimer);};
     let active=true;
     let received:{remove:()=>void}|undefined;
     let response:{remove:()=>void}|undefined;
@@ -130,8 +132,8 @@ export default function App(){
         if(role==='RIDER')setNotificationOpenSignal(value=>value+1);
       });
     }).catch(reason=>{if(active)setNotificationsError(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');});
-    return()=>{active=false;received?.remove();response?.remove();appState.remove();};
-  },[token,role,loadNotifications]);
+    return()=>{active=false;received?.remove();response?.remove();appState.remove();clearInterval(pollTimer);};
+  },[token,role,loadNotifications,isPushPermitted]);
   useEffect(()=>{if(token)void loadNotifications(token);else setNotificationInbox({items:[],unreadCount:0});},[token,loadNotifications]);
   const loadRiderData=useCallback(async(currentToken:string,quiet=false)=>{
     if(!quiet)setLoading(true);setError('');
@@ -300,7 +302,8 @@ export default function App(){
     if(!token)return;setBusy(offer.id);setError('');
     try{
       await api.post(`/rider/offers/${encodeURIComponent(offer.id)}/accept`,{},token);
-      setNotice('Delivery accepted. Keep Smile open while you travel; location sharing runs only in the foreground.');
+      setNotice('Delivery accepted. Show your pickup code to the vendor when collecting this order.');
+      setActiveDeliverySignal(value=>value+1);
       try{await startForegroundLocation();}catch(e){setLocationMessage(e instanceof Error?e.message:'Location sharing is unavailable.');}
       await loadRiderData(token);
     }catch(e){setError(e instanceof Error?e.message:'Could not accept the offer. Refresh for the latest assignment.');await loadRiderData(token);}
@@ -314,11 +317,11 @@ export default function App(){
   };
   const complete=async(delivery:RiderDelivery)=>{
     if(!token)return;const code=completionCodes[delivery.id]??'';
-    if(!/^\d{6}$/.test(code)){setError('Enter the customerâ€™s six-digit delivery code.');return;}
+    if(!/^\d{6}$/.test(code)){setError('Enter the customer’s six-digit delivery code.');return;}
     setBusy(delivery.id);setError('');
     try{
       await api.post(`/rider/deliveries/${encodeURIComponent(delivery.id)}/complete`,{code},token);
-      setCompletionCodes(current=>({...current,[delivery.id]:''}));setNotice('Delivery complete. The customerâ€™s code was verified by the server.');
+      setCompletionCodes(current=>({...current,[delivery.id]:''}));setNotice('Delivery complete. The customer’s code was verified by the server.');
       try{await startForegroundLocation();}catch(e){setLocationMessage(e instanceof Error?e.message:'Could not resume foreground location sharing.');await api.put('/rider/availability',{available:false},token).catch(()=>undefined);setRiderProfile(profile=>profile?{...profile,available:false}:profile);}
       await loadRiderData(token);
     }catch(e){setError(e instanceof Error?e.message:'Delivery could not be completed. Check the code and delivery state.');}
@@ -331,6 +334,24 @@ export default function App(){
     setPushToken('');
     stopLocationUpdates();setSession(null);setRole(null);setSelectedRole(null);setVendorOrders([]);setRiderProfile(null);setOffers([]);setDeliveries([]);await Promise.all([removeStorage('makanza-ops-session'),removeStorage('makanza-operations-work-role-v1')]);
     if(current)void api.post('/auth/logout',{},current).catch(()=>undefined);
+  };
+  const completeAccountDeletion=async()=>{
+    setPushToken('');
+    stopLocationUpdates();
+    setSession(null);
+    setRole(null);
+    setSelectedRole(null);
+    setVendorOrders([]);
+    setVendorStoreName('Your store');
+    setVendorOnIndex(true);
+    setVendorNotificationsOpen(false);
+    setRiderProfile(null);
+    setOffers([]);
+    setDeliveries([]);
+    setNotificationInbox({items:[],unreadCount:0});
+    setError('');
+    await Promise.all([removeStorage('makanza-ops-session'),removeStorage('makanza-operations-work-role-v1')]);
+    setNotice('Your Smile account has been deleted.');
   };
   const switchRole=(next:WorkRole)=>{if(session)return;setSelectedRole(next);setRole(next);setError('');void writeStorage('makanza-operations-work-role-v1',next).catch(()=>undefined);};
   const selectSessionWorkspace=(next:WorkRole)=>{setSelectedRole(next);setRole(next);setError('');void writeStorage('makanza-operations-work-role-v1',next).catch(()=>undefined);if(!token||!session?.user.roles.includes(next))return;if(next==='VENDOR')void loadVendorOrders(token);if(next==='RIDER')void loadRiderData(token);};
@@ -353,8 +374,8 @@ export default function App(){
       </View>
     </View>}
     {session&&<>
-        {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} colors={c} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpen={vendorNotificationsOpen} onCloseNotifications={()=>setVendorNotificationsOpen(false)} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} onToggleTheme={toggleTheme} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status,reason)=>void updateOrder(id,status,reason)} onVerifyPickup={(id,code)=>void verifyVendorPickup(id,code)} onCancelOrder={(id,reason,details)=>void cancelRoleOrder('vendor',id,reason,details)} onSignOut={()=>void signOut()} onStoreName={setVendorStoreName} onIndexChange={setVendorOnIndex} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
-      {role==='RIDER'&&<RiderWorkspace token={token??''} user={session.user} name={session.user.name} authorized={session.user.roles.includes('RIDER')} profile={riderProfile} offers={offers} deliveries={deliveries} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpenSignal={notificationOpenSignal} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} loading={loading} busy={busy} error={error} notice={notice} locationMessage={locationMessage} locationSharing={locationSharing} locationPermissionNeeded={locationPermissionNeeded} vehicleType={vehicleType} serviceArea={serviceArea} termsAccepted={termsAccepted} riderApplication={riderApplication} onRiderApplicationChange={(key,value)=>setRiderApplication(current=>({...current,[key]:value}))} completionCodes={completionCodes} colors={c} onCancel={(id,reason,details)=>void cancelRoleOrder('rider',id,reason,details)} onReload={()=>token&&void loadRiderData(token)} onAvailability={available=>void setAvailability(available)} onAccept={offer=>void acceptOffer(offer)} onReject={offer=>void rejectOffer(offer)} onComplete={delivery=>void complete(delivery)} onCode={(id,code)=>setCompletionCodes(current=>({...current,[id]:code}))} onShareLocation={()=>void startForegroundLocation().catch(e=>setLocationMessage(e instanceof Error?e.message:'Location sharing could not start.'))} onOpenSettings={()=>void Linking.openSettings()} onVehicle={setVehicleType} onArea={setServiceArea} onTerms={()=>setTermsAccepted(value=>!value)} onApply={()=>void applyForRider()} onSignOut={()=>void signOut()} onTheme={toggleTheme} autoRefresh={riderAutoRefresh} newsletter={riderNewsletter} onAutoRefresh={value=>{setRiderAutoRefresh(value);void writeStorage('makanza-operations-auto-refresh-v1',String(value));}} onNewsletter={value=>{setRiderNewsletter(value);void writeStorage('makanza-operations-newsletter-v1',String(value));}} onProfileSaved={(name,phone)=>{const updated={...session,user:{...session.user,name,phone}};setSession(updated);void writeStorage('makanza-ops-session',JSON.stringify(updated));}}/>}
+        {role==='VENDOR'&&<VendorWorkspace token={token??''} authorized={session.user.roles.includes('VENDOR')} orders={vendorOrders} busyId={busy} loading={loading} error={error} notice={notice} colors={c} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpen={vendorNotificationsOpen} onCloseNotifications={()=>setVendorNotificationsOpen(false)} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} onToggleTheme={toggleTheme} onReload={()=>token&&void loadVendorOrders(token)} onOrderAction={(id,status,reason)=>void updateOrder(id,status,reason)} onVerifyPickup={(id,code)=>void verifyVendorPickup(id,code)} onCancelOrder={(id,reason,details)=>void cancelRoleOrder('vendor',id,reason,details)} onSignOut={()=>void signOut()} onAccountDeleted={()=>void completeAccountDeletion()} onStoreName={setVendorStoreName} onIndexChange={setVendorOnIndex} onAuthorized={()=>{const updated={...session,user:{...session.user,roles:Array.from(new Set([...session.user.roles,'VENDOR']))}};void writeStorage('makanza-ops-session',JSON.stringify(updated));setSession(updated);void loadVendorOrders(token??'');}}/>}
+      {role==='RIDER'&&<RiderWorkspace token={token??''} user={session.user} name={session.user.name} authorized={session.user.roles.includes('RIDER')} profile={riderProfile} offers={offers} deliveries={deliveries} notifications={notificationInbox.items} unreadNotifications={notificationInbox.unreadCount} notificationsLoading={notificationsLoading} notificationsError={notificationsError} notificationsOpenSignal={notificationOpenSignal} activeDeliverySignal={activeDeliverySignal} onReloadNotifications={()=>token&&void loadNotifications(token)} onReadNotification={item=>void readNotification(item)} onReadAllNotifications={()=>void readAllNotifications()} loading={loading} busy={busy} error={error} notice={notice} locationMessage={locationMessage} locationSharing={locationSharing} locationPermissionNeeded={locationPermissionNeeded} vehicleType={vehicleType} serviceArea={serviceArea} termsAccepted={termsAccepted} riderApplication={riderApplication} onRiderApplicationChange={(key,value)=>setRiderApplication(current=>({...current,[key]:value}))} completionCodes={completionCodes} colors={c} onCancel={(id,reason,details)=>void cancelRoleOrder('rider',id,reason,details)} onReload={()=>token&&void loadRiderData(token)} onAvailability={available=>void setAvailability(available)} onAccept={offer=>void acceptOffer(offer)} onReject={offer=>void rejectOffer(offer)} onComplete={delivery=>void complete(delivery)} onCode={(id,code)=>setCompletionCodes(current=>({...current,[id]:code}))} onShareLocation={()=>void startForegroundLocation().catch(e=>setLocationMessage(e instanceof Error?e.message:'Location sharing could not start.'))} onOpenSettings={()=>void Linking.openSettings()} onVehicle={setVehicleType} onArea={setServiceArea} onTerms={()=>setTermsAccepted(value=>!value)} onApply={()=>void applyForRider()} onSignOut={()=>void signOut()} onAccountDeleted={()=>void completeAccountDeletion()} onTheme={toggleTheme} autoRefresh={riderAutoRefresh} newsletter={riderNewsletter} onAutoRefresh={value=>{setRiderAutoRefresh(value);void writeStorage('makanza-operations-auto-refresh-v1',String(value));}} onNewsletter={value=>{setRiderNewsletter(value);void writeStorage('makanza-operations-newsletter-v1',String(value));}} onProfileSaved={(name,phone)=>{const updated={...session,user:{...session.user,name,phone}};setSession(updated);void writeStorage('makanza-ops-session',JSON.stringify(updated));}}/>}
     </>}
   </SafeAreaView>;
 }

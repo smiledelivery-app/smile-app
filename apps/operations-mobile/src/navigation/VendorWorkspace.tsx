@@ -1,7 +1,8 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import type { CancellationReason } from '@makanza/mobile-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import type { Product, ProductAddon, VendorOrder } from '@makanza/mobile-core';
 import { api } from '../services/api';
@@ -17,10 +18,31 @@ import StoreMediaPicker from './StoreMediaPicker';
 import VendorProductEditorScreen, { type ProductAddonDraft, type ProductDraft } from './VendorProductEditorScreen';
 import VendorWalletScreen from '../vendor/VendorWalletScreen';
 import { Ionicons } from '../components/AppIcon';
-import { OperationsInfoScreen, VendorPasswordScreen, VendorSavedAddresses, VendorSettingsScreen } from './VendorAccountScreens';
+import { OperationsInfoScreen, VendorDeleteAccountScreen, VendorPasswordScreen, VendorSavedAddresses, VendorSettingsScreen } from './VendorAccountScreens';
 import OperationsNotificationsScreen, { type OperationsNotification } from './OperationsNotificationsScreen';
 import { uploadMediaAsset } from '../utils/upload-media';
 import { vendorRadius, vendorSpace, vendorType } from '../theme/vendor';
+import {
+  filterVendorHistoryOrders,
+  filterVendorOrdersByTab,
+  getVendorOrderTabCounts,
+  type VendorHistoryFilter,
+  type VendorOrderTab,
+} from '../utils/vendor-orders';
+
+const VENDOR_ORDER_TABS: ReadonlyArray<{ id: VendorOrderTab; label: string }> = [
+  { id: 'incoming', label: 'Incoming' },
+  { id: 'accepted', label: 'Accepted' },
+  { id: 'completed', label: 'Completed' },
+];
+
+const VENDOR_HISTORY_FILTERS: ReadonlyArray<{ id: VendorHistoryFilter; label: string }> = [
+  { id: 'all', label: 'All orders' },
+  { id: 'incoming', label: 'Incoming' },
+  { id: 'accepted', label: 'Accepted' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'declined', label: 'Rejected / Cancelled' },
+];
 
 type VendorProduct=Product&{available:boolean;addons:ProductAddon[]};
 type VendorUserProfile={name:string;email:string;phone:string|null};
@@ -41,15 +63,21 @@ function orderPeriodBounds(period:OrderPeriod,now=new Date()):readonly[Date,Date
   start.setDate(Math.min(day,new Date(start.getFullYear(),start.getMonth()+1,0).getDate()));
   return[start,end];
 }
-type Props={token:string;authorized:boolean;orders:VendorOrder[];busyId:string;loading:boolean;error:string;colors:AppColors;notifications:OperationsNotification[];unreadNotifications:number;notificationsLoading:boolean;notificationsError:string;notificationsOpen?:boolean;onCloseNotifications?:()=>void;onReloadNotifications:()=>void;onReadNotification:(item:OperationsNotification)=>void;onReadAllNotifications:()=>void;onReload:()=>void;onOrderAction:(id:string,status:string,reason?:string)=>void;onVerifyPickup:(id:string,code:string)=>void;onCancelOrder:(id:string,reason:CancellationReason,details:string)=>void;onSignOut:()=>void;onAuthorized:()=>void;onStoreName:(name:string)=>void;onToggleTheme:()=>void;onIndexChange?:(isIndex:boolean)=>void};
+type Props={token:string;authorized:boolean;orders:VendorOrder[];busyId:string;loading:boolean;error:string;notice?:string;colors:AppColors;notifications:OperationsNotification[];unreadNotifications:number;notificationsLoading:boolean;notificationsError:string;notificationsOpen?:boolean;onCloseNotifications?:()=>void;onReloadNotifications:()=>void;onReadNotification:(item:OperationsNotification)=>void;onReadAllNotifications:()=>void;onReload:()=>void;onOrderAction:(id:string,status:string,reason?:string)=>void;onVerifyPickup:(id:string,code:string)=>void;onCancelOrder:(id:string,reason:CancellationReason,details:string)=>void;onSignOut:()=>void;onAccountDeleted:()=>void;onAuthorized:()=>void;onStoreName:(name:string)=>void;onToggleTheme:()=>void;onIndexChange?:(isIndex:boolean)=>void};
 
 export default function VendorWorkspace(p:Props){
-  const [tab,setTabState]=useState<VendorTab>('overview');const tabHistory=useRef<VendorTab[]>([]);const setTab=(next:VendorTab)=>{if(next!==tab){if(next==='overview')tabHistory.current=[];else tabHistory.current=[...tabHistory.current.slice(-19),tab];setTabState(next);}p.onIndexChange?.(next==='overview');};const [profile,setProfile]=useState<VendorProfile|null>(null);const [profileLoading,setProfileLoading]=useState(p.authorized);const [profileError,setProfileError]=useState('');const [storeDetailsSkipped,setStoreDetailsSkipped]=useState(false);const [editingStore,setEditingStore]=useState(false);const [account,setAccount]=useState<VendorUserProfile|null>(null);const [editingProfile,setEditingProfile]=useState(false);const [profileDraft,setProfileDraft]=useState({name:'',phone:''});const [profileSaving,setProfileSaving]=useState(false);const [accountScreen,setAccountScreen]=useState<'password'|'settings'|'help'|'about'|'privacy'|null>(null);const [addressesOpen,setAddressesOpen]=useState(false);
+  const [tab,setTabState]=useState<VendorTab>('overview');const tabHistory=useRef<VendorTab[]>([]);const setTab=(next:VendorTab)=>{if(next!==tab){if(next==='overview')tabHistory.current=[];else tabHistory.current=[...tabHistory.current.slice(-19),tab];setTabState(next);}p.onIndexChange?.(next==='overview');};const [profile,setProfile]=useState<VendorProfile|null>(null);const [profileLoading,setProfileLoading]=useState(p.authorized);const [profileError,setProfileError]=useState('');const [storeDetailsSkipped,setStoreDetailsSkipped]=useState(false);const [editingStore,setEditingStore]=useState(false);const [account,setAccount]=useState<VendorUserProfile|null>(null);const [editingProfile,setEditingProfile]=useState(false);const [profileDraft,setProfileDraft]=useState({name:'',phone:''});const [profileSaving,setProfileSaving]=useState(false);const [accountScreen,setAccountScreen]=useState<'password'|'settings'|'help'|'about'|'privacy'|'delete-account'|null>(null);const [addressesOpen,setAddressesOpen]=useState(false);
   const [products,setProducts]=useState<VendorProduct[]>([]);const [productsLoading,setProductsLoading]=useState(false);const [productsError,setProductsError]=useState('');const [formOpen,setFormOpen]=useState(false);const [editingProduct,setEditingProduct]=useState<string|null>(null);const [saving,setSaving]=useState(false);const [mediaBusy,setMediaBusy]=useState(false);const [notice,setNotice]=useState('');const [draft,setDraft]=useState<ProductDraft>({name:'',description:'',category:'',price:'',stock:'',imageUrl:''});const [addonDrafts,setAddonDrafts]=useState<ProductAddonDraft[]>([]);const c=p.colors;const s=styles(c);const approved=profile?.status==='APPROVED';
   const [pendingReviewDismissed,setPendingReviewDismissed]=useState(false);
+  const [orderTab,setOrderTab]=useState<VendorOrderTab>('incoming');
+  const [historyOpen,setHistoryOpen]=useState(false);
+  const [historyFilter,setHistoryFilter]=useState<VendorHistoryFilter>('all');
   const [orderPeriod,setOrderPeriod]=useState<OrderPeriod>('All time');
+  const orderTabCounts=useMemo(()=>getVendorOrderTabCounts(p.orders),[p.orders]);
+  const visibleTabOrders=useMemo(()=>filterVendorOrdersByTab(p.orders,orderTab),[p.orders,orderTab]);
   const ordersForPeriod=useMemo(()=>{const bounds=orderPeriodBounds(orderPeriod);return bounds?p.orders.filter(order=>{const createdAt=new Date(order.createdAt).getTime();return createdAt>=bounds[0].getTime()&&createdAt<=bounds[1].getTime();}):p.orders;},[orderPeriod,p.orders]);
-  useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(p.notificationsOpen){p.onCloseNotifications?.();return true;}if(addressesOpen){setAddressesOpen(false);return true;}if(accountScreen){setAccountScreen(null);return true;}if(editingProfile){setEditingProfile(false);return true;}if(editingStore){setEditingStore(false);return true;}if(formOpen){resetProductForm();return true;}const previous=tabHistory.current.pop();if(previous){setTabState(previous);p.onIndexChange?.(previous==='overview');return true;}return false;});return()=>subscription.remove();},[p.notificationsOpen,p.onCloseNotifications,p.onIndexChange,addressesOpen,accountScreen,editingProfile,editingStore,formOpen]);
+  const historyOrders=useMemo(()=>filterVendorHistoryOrders(ordersForPeriod,historyFilter),[ordersForPeriod,historyFilter]);
+  useEffect(()=>{const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{if(historyOpen){setHistoryOpen(false);return true;}if(p.notificationsOpen){p.onCloseNotifications?.();return true;}if(addressesOpen){setAddressesOpen(false);return true;}if(accountScreen){setAccountScreen(null);return true;}if(editingProfile){setEditingProfile(false);return true;}if(editingStore){setEditingStore(false);return true;}if(formOpen){resetProductForm();return true;}const previous=tabHistory.current.pop();if(previous){setTabState(previous);p.onIndexChange?.(previous==='overview');return true;}return false;});return()=>subscription.remove();},[historyOpen,p.notificationsOpen,p.onCloseNotifications,p.onIndexChange,addressesOpen,accountScreen,editingProfile,editingStore,formOpen]);
   const loadProfile=async()=>{if(!p.authorized)return;setProfileLoading(true);setProfileError('');try{const loaded=await api.get<VendorProfile>('/vendor/profile',p.token);setProfile(loaded);p.onStoreName(loaded.name);const user=await api.get<VendorUserProfile>('/auth/profile',p.token);setAccount(user);setProfileDraft({name:user.name,phone:user.phone??''});}catch(e){setProfileError(e instanceof Error?e.message:'Could not load account details.');}finally{setProfileLoading(false);}};
   const loadCatalog=async()=>{setProductsLoading(true);setProductsError('');try{setProducts(await api.get<VendorProduct[]>('/vendor/products',p.token));}catch(e){setProductsError(e instanceof Error?e.message:'Could not load products.');}finally{setProductsLoading(false);}};
   useEffect(()=>{void loadProfile();},[p.token,p.authorized]);
@@ -68,18 +96,43 @@ export default function VendorWorkspace(p:Props){
   if((!profile&&!storeDetailsSkipped)||editingStore)return <View style={s.flex}><ScrollView style={s.flex} contentContainerStyle={s.content}>{profileError?<Text style={s.error}>{profileError}</Text>:null}{p.authorized&&profile?.status!=='APPROVED'&&!pendingReviewDismissed&&<View style={s.review}><View style={s.reviewHeader}><Text style={s.reviewTitle}>Store application · {profile?.status?.replaceAll('_',' ').toLowerCase()??'not submitted'}</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss application review notice" onPress={()=>setPendingReviewDismissed(true)} hitSlop={8}><Ionicons name="close" size={18} color={c.muted}/></Pressable></View><Text style={s.copy}>Complete your store details. We will review your business before products can go live.</Text></View>}<VendorStoreProfileForm token={p.token} profile={profile} authorized={p.authorized} colors={c} onAuthorized={p.onAuthorized} onSaved={next=>{setProfile(next);setProfileError('');setStoreDetailsSkipped(false);p.onStoreName(next.name);setEditingStore(false);setNotice('Store details saved.');}} onCancel={()=>{setEditingStore(false);if(!profile)setStoreDetailsSkipped(true);}} cancelTitle={profile?'Back to dashboard':'Skip for now'}/>{notice?<Text style={s.success}>{notice}</Text>:null}</ScrollView>{p.authorized&&(approved||pendingReview)&&<RoleTabBar role="VENDOR" active="account" onSelect={()=>setEditingStore(false)} colors={c}/>}</View>;
 
   if(accountScreen==='password')return <VendorPasswordScreen token={p.token} colors={c} onBack={()=>setAccountScreen(null)} onSaved={()=>setNotice('Password changed.')}/>;
-  if(accountScreen==='settings')return <VendorSettingsScreen role="Vendor" colors={c} dark={c.isDark} onTheme={p.onToggleTheme} onBack={()=>setAccountScreen(null)} onPrivacy={()=>setAccountScreen('privacy')} onHelp={()=>setAccountScreen('help')} onAbout={()=>setAccountScreen('about')}/>;
+  if(accountScreen==='settings')return <VendorSettingsScreen role="Vendor" colors={c} dark={c.isDark} onTheme={p.onToggleTheme} onBack={()=>setAccountScreen(null)} onPrivacy={()=>setAccountScreen('privacy')} onHelp={()=>setAccountScreen('help')} onAbout={()=>setAccountScreen('about')} onDeleteAccount={()=>setAccountScreen('delete-account')}/>;
+  if(accountScreen==='delete-account')return <VendorDeleteAccountScreen token={p.token} colors={c} onBack={()=>setAccountScreen('settings')} onDeleted={p.onAccountDeleted}/>;
   if(accountScreen==='help'||accountScreen==='about'||accountScreen==='privacy')return <OperationsInfoScreen kind={accountScreen} role="Vendor" colors={c} onBack={()=>setAccountScreen('settings')}/>;
 
   if(tab==='wallet')return <View style={s.flex}><VendorWalletScreen token={p.token} colors={c}/><RoleTabBar role="VENDOR" active={tab} onSelect={value=>setTab(value as VendorTab)} colors={c}/></View>;
   if(tab==='products'&&formOpen)return <VendorProductEditorScreen draft={draft} editing={Boolean(editingProduct)} addons={addonDrafts} error={productsError} saving={saving} mediaBusy={mediaBusy} colors={c} onChange={patch=>setDraft(current=>({...current,...patch}))} onAddonChange={(index,patch)=>setAddonDrafts(items=>items.map((item,i)=>i===index?{...item,...patch}:item))} onRemoveAddon={index=>setAddonDrafts(items=>items.filter((_,i)=>i!==index))} onAddAddon={()=>setAddonDrafts(items=>items.length<20?[...items,{name:'',price:''}]:items)} onPickImage={()=>void pickProductImage()} onRemoveImage={()=>setDraft(current=>({...current,imageUrl:''}))} onSave={()=>void saveProduct()} onCancel={resetProductForm}/>;
 
-  const fixedEyebrow=tab==='orders'?'STORE QUEUE':tab==='products'?'YOUR MENU':tab==='account'?'YOUR WORKSPACE':'STORE OPERATIONS';const fixedTitle=tab==='orders'?'Orders':tab==='products'?'Products & extras':tab==='account'?'Profile':'Overview';const fixedBody=tab==='orders'?'Accept orders, prepare them, and verify rider pickup.':tab==='products'?'List each thing you sell and set a separate price for every extra.':tab==='account'?'Manage your personal details and your store.':'Manage incoming orders and your store menu.';
-  return <View style={s.flex}>{tab!=='overview'&&<View style={s.fixedHeader}><Heading eyebrow={fixedEyebrow} title={fixedTitle} body={fixedBody} c={c} onRefresh={tab==='orders'?p.onReload:undefined}/></View>}<ScrollView key={tab} style={s.flex} contentContainerStyle={s.content}>{pendingReview&&!pendingReviewDismissed&&<View style={s.review}><View style={s.reviewHeader}><Text style={s.reviewTitle}>Application pending review</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss application review notice" onPress={()=>setPendingReviewDismissed(true)} hitSlop={8}><Ionicons name="close" size={18} color={c.muted}/></Pressable></View><Text style={s.copy}>You can prepare your menu and explore the workspace while we review your application. Orders and payouts activate after approval.</Text></View>}
-    {tab==='overview'&&<><Heading eyebrow="STORE OPERATIONS" title="Overview" body="Manage incoming orders and your store menu." c={c}/><View style={s.hero}><Text style={s.heroTitle}>{profile?.name??'Your store'}</Text><View style={s.metrics}><Metric label="NEW" value={p.orders.filter(o=>o.status==='CONFIRMED').length} c={c}/><Metric label="PREPARING" value={p.orders.filter(o=>['ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status)).length} c={c}/><Metric label="ORDERS" value={p.orders.length} c={c}/></View></View><View style={s.titleRow}><Text style={s.title}>Needs your attention</Text><Pressable accessibilityRole="button" onPress={()=>setTab('orders')}><Text style={s.link}>All orders ›</Text></Pressable></View>{p.orders.filter(o=>['CONFIRMED','ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status)).slice(0,3).map(order=><OrderCard key={order.id} order={order} busy={p.busyId===order.id} colors={c} onAction={p.onOrderAction} onVerifyPickup={p.onVerifyPickup} onCancel={p.onCancelOrder}/>)}{!p.orders.some(o=>['CONFIRMED','ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status))&&<Empty title="You're all caught up" body="New store orders will appear here." c={c}/>}</>}
+  const openHistory=()=>{setHistoryFilter('all');setOrderPeriod('All time');setHistoryOpen(true);};
+  const fixedEyebrow=tab==='orders'?'STORE QUEUE':tab==='products'?'YOUR MENU':tab==='account'?'YOUR WORKSPACE':'STORE OPERATIONS';const fixedTitle=tab==='orders'?'Orders':tab==='products'?'Products & extras':tab==='account'?'Profile':'Overview';const fixedBody=tab==='orders'?(p.orders.length?`${orderTabCounts.incoming} incoming · ${orderTabCounts.accepted} accepted · ${p.orders.length} total`:'Accept or reject incoming orders, prepare them, and track handoff.'):tab==='products'?'List each thing you sell and set a separate price for every extra.':tab==='account'?'Manage your personal details and your store.':'Manage incoming orders and your store menu.';
+  return <View style={s.flex}>{tab!=='overview'&&<View style={s.fixedHeader}><Heading eyebrow={fixedEyebrow} title={fixedTitle} body={fixedBody} c={c} loading={tab==='orders'&&p.loading} onRefresh={tab==='orders'?p.onReload:undefined} onHistory={tab==='orders'?openHistory:undefined}/></View>}<ScrollView key={tab} style={s.flex} contentContainerStyle={s.content} refreshControl={tab==='orders'?<RefreshControl refreshing={p.loading} onRefresh={p.onReload} tintColor={c.green}/>:undefined}>{pendingReview&&!pendingReviewDismissed&&<View style={s.review}><View style={s.reviewHeader}><Text style={s.reviewTitle}>Application pending review</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss application review notice" onPress={()=>setPendingReviewDismissed(true)} hitSlop={8}><Ionicons name="close" size={18} color={c.muted}/></Pressable></View><Text style={s.copy}>You can prepare your menu and explore the workspace while we review your application. Orders and payouts activate after approval.</Text></View>}
+    {tab==='overview'&&<><Heading eyebrow="STORE OPERATIONS" title="Overview" body="Manage incoming orders and your store menu." c={c}/>{p.notice?<Text style={s.success}>{p.notice}</Text>:null}{p.error?<Text accessibilityRole="alert" style={s.error}>{p.error}</Text>:null}<View style={s.hero}><Text style={s.heroTitle}>{profile?.name??'Your store'}</Text><View style={s.metrics}><Metric label="NEW" value={p.orders.filter(o=>o.status==='CONFIRMED').length} c={c}/><Metric label="PREPARING" value={p.orders.filter(o=>['ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status)).length} c={c}/><Metric label="ORDERS" value={p.orders.length} c={c}/></View></View><View style={s.titleRow}><Text style={s.title}>Needs your attention</Text><Pressable accessibilityRole="button" onPress={()=>setTab('orders')}><Text style={s.link}>All orders ›</Text></Pressable></View>{p.orders.filter(o=>['CONFIRMED','ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status)).slice(0,3).map(order=><OrderCard key={order.id} order={order} busy={p.busyId===order.id} colors={c} onAction={p.onOrderAction} onVerifyPickup={p.onVerifyPickup} onCancel={p.onCancelOrder}/>)}{!p.orders.some(o=>['CONFIRMED','ACCEPTED_BY_VENDOR','PREPARING'].includes(o.status))&&<Empty title="You're all caught up" body="New store orders will appear here." c={c}/>}</>}
     {tab==='orders'&&<>
-      <OrderDateFilter value={orderPeriod} colors={c} onChange={setOrderPeriod}/>
-      {p.loading?<ActivityIndicator style={s.loader} color={c.green}/>:p.error?<Empty title="Orders unavailable" body={p.error} c={c}/>:ordersForPeriod.length?ordersForPeriod.map(order=><OrderCard key={order.id} order={order} busy={p.busyId===order.id} colors={c} onAction={p.onOrderAction} onVerifyPickup={p.onVerifyPickup} onCancel={p.onCancelOrder}/>):orderPeriod==='All time'?<Empty title="No orders yet" body="Orders from customers will appear here." c={c}/>:<><Empty title={`No orders for ${orderPeriod.toLowerCase()}`} body="Try another date range to find older store orders." c={c}/><Pressable accessibilityRole="button" onPress={()=>setOrderPeriod('All time')} style={s.clearOrderFilter}><Text style={s.link}>Show all orders</Text></Pressable></>}
+      <View style={s.orderSegment} accessibilityRole="tablist">
+        {VENDOR_ORDER_TABS.map(item=>{
+          const selected=orderTab===item.id;
+          const count=orderTabCounts[item.id];
+          return <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{selected}} onPress={()=>setOrderTab(item.id)} style={[s.orderSegmentItem,selected&&s.orderSegmentActive]}>
+            <Text numberOfLines={1} style={[s.orderSegmentText,selected&&s.orderSegmentTextActive]}>{item.label}</Text>
+            {count>0&&<View style={[s.orderSegmentCount,selected&&s.orderSegmentCountActive]}><Text style={[s.orderSegmentCountText,selected&&s.orderSegmentCountTextActive]}>{count}</Text></View>}
+          </Pressable>;
+        })}
+      </View>
+      {p.notice?<Text style={s.success}>{p.notice}</Text>:null}
+      {p.error?<Text accessibilityRole="alert" style={s.error}>{p.error}</Text>:null}
+      {p.loading&&!p.orders.length?<ActivityIndicator style={s.loader} color={c.green}/>
+      :p.error&&!p.orders.length?<Empty title="Orders unavailable" body={p.error} c={c}/>
+      :visibleTabOrders.length?<>
+        <View style={s.orderListHeading}>
+          <View>
+            <Text style={s.orderListTitle}>{orderTab==='incoming'?'INCOMING ORDERS':orderTab==='accepted'?'ACCEPTED & IN PROGRESS':'COMPLETED ORDERS'}</Text>
+            <Text style={s.orderListSubtitle}>{visibleTabOrders.length} {visibleTabOrders.length===1?'order':'orders'}{orderTab!=='completed'?' · updated automatically':''}</Text>
+          </View>
+          <View style={s.orderCountBadge}><Ionicons name={orderTab==='incoming'?'notifications-outline':orderTab==='accepted'?'time-outline':'checkmark-circle-outline'} size={13} color={c.green}/><Text style={s.orderCountText}>{visibleTabOrders.length}</Text></View>
+        </View>
+        {visibleTabOrders.map(order=><OrderCard key={order.id} order={order} busy={p.busyId===order.id} colors={c} onAction={p.onOrderAction} onVerifyPickup={p.onVerifyPickup} onCancel={p.onCancelOrder}/>)}
+      </>
+      :<><Empty title={orderTab==='incoming'?'No incoming orders':orderTab==='accepted'?'No accepted orders':'No completed orders yet'} body={orderTab==='incoming'?'Paid customer orders awaiting acceptance or rejection will appear here.':orderTab==='accepted'?'Orders you accept and prepare for pickup will appear here.':'Orders delivered to customers will appear here.'} c={c}/>{p.orders.length>0&&<Pressable accessibilityRole="button" onPress={openHistory} style={s.historyLinkButton}><Ionicons name="history" size={16} color={c.green}/><Text style={s.link}>View order history ({p.orders.length})</Text></Pressable>}</>}
     </>}
     {tab==='products'&&<><PrimaryButton title={formOpen?'Close product form':'＋ Add a product'} onPress={()=>{if(formOpen)resetProductForm();else{setProductsError('');setAddonDrafts([]);setFormOpen(true);}}} style={s.button}/>{formOpen&&<View style={s.card}><Text style={s.formTitle}>{editingProduct?'Edit product':'Add a product'}</Text><FormField label="Product name" value={draft.name} onChangeText={name=>setDraft(v=>({...v,name}))} placeholder="e.g. Jollof rice" dark={c.isDark}/><FormField label="Category" value={draft.category} onChangeText={category=>setDraft(v=>({...v,category}))} placeholder="Rice" dark={c.isDark}/><FormField label="Price (₦)" value={draft.price} onChangeText={price=>setDraft(v=>({...v,price}))} placeholder="500" keyboardType="decimal-pad" dark={c.isDark}/><FormField label="Stock (optional)" value={draft.stock} onChangeText={stock=>setDraft(v=>({...v,stock}))} placeholder="Leave blank if not tracked" keyboardType="number-pad" dark={c.isDark}/><FormField label="Description" value={draft.description} onChangeText={description=>setDraft(v=>({...v,description}))} placeholder="Describe the product" multiline dark={c.isDark}/><StoreMediaPicker variant="logo" label="Product photo" helper="A clear square photo helps customers choose" uri={draft.imageUrl} busy={mediaBusy} colors={c} onPick={()=>void pickProductImage()} onRemove={()=>setDraft(v=>({...v,imageUrl:""}))}/><View style={s.inlineExtras}><Text style={s.formTitle}>Optional extras</Text><Text style={s.copy}>Add choices such as extra chicken or plantain with their own prices.</Text>{addonDrafts.map((addon,index)=><View key={addon.id??`new-${index}`} style={s.inlineAddon}><FormField label="Extra name" value={addon.name} onChangeText={name=>setAddonDrafts(items=>items.map((item,i)=>i===index?{...item,name}:item))} placeholder="e.g. Extra chicken" dark={c.isDark}/><FormField label="Price (NGN)" value={addon.price} onChangeText={price=>setAddonDrafts(items=>items.map((item,i)=>i===index?{...item,price}:item))} placeholder="500" keyboardType="decimal-pad" dark={c.isDark}/>{!addon.id&&<Pressable onPress={()=>setAddonDrafts(items=>items.filter((_,i)=>i!==index))} style={s.pill}><Text style={s.deleteText}>Remove extra</Text></Pressable>}</View>)}{addonDrafts.length<20&&<PrimaryButton title="+ Add an extra" secondary onPress={()=>setAddonDrafts(items=>[...items,{name:"",price:""}])} style={s.button}/>}</View><PrimaryButton title={saving?'Saving…':editingProduct?'Save changes':'Add product'} onPress={()=>void saveProduct()} disabled={saving||mediaBusy} style={s.button}/><PrimaryButton title="Cancel" secondary onPress={resetProductForm} disabled={saving} style={s.button}/></View>}{notice?<Text style={s.success}>{notice}</Text>:null}{productsError?<Text style={s.error}>{productsError}</Text>:null}{productsLoading?<ActivityIndicator style={s.loader} color={c.green}/>:products.map(product=><ProductRow key={product.id} product={product} token={p.token} colors={c} onRefresh={()=>void loadCatalog()} onToggle={()=>void toggleProduct(product)} onEdit={()=>startProductEdit(product)} onDelete={()=>deleteProduct(product)}/>)}{!productsLoading&&!productsError&&!products.length&&!formOpen&&<Empty title="Your catalog is empty" body="Add rice, chicken, plantain, drinks, and any other items you sell." c={c}/>}</>}
     {tab==='account'&&<>
@@ -151,7 +204,44 @@ export default function VendorWorkspace(p:Props){
       {notice?<Text style={s.success}>{notice}</Text>:null}
       <Pressable accessibilityRole="button" onPress={p.onSignOut} style={s.logout}><Ionicons name="log-out-outline" size={18} color={c.isDark?'#f0877a':'#a34232'}/><Text style={s.logoutText}>Log out</Text></Pressable>
     </>}
-  </ScrollView><RoleTabBar role="VENDOR" active={tab} onSelect={value=>setTab(value as VendorTab)} colors={c}/>{addressesOpen&&<VendorSavedAddresses token={p.token} colors={c} onClose={()=>setAddressesOpen(false)}/>}</View>;
+  </ScrollView><RoleTabBar role="VENDOR" active={tab} onSelect={value=>setTab(value as VendorTab)} colors={c}/>{addressesOpen&&<VendorSavedAddresses token={p.token} colors={c} onClose={()=>setAddressesOpen(false)}/>}<Modal visible={historyOpen} animationType="slide" onRequestClose={()=>setHistoryOpen(false)}>
+    <SafeAreaView style={s.historySafe}>
+      <View style={s.historyHeader}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to orders" onPress={()=>setHistoryOpen(false)} style={s.historyBackButton}>
+          <Ionicons name="chevron-back" size={20} color={c.green}/>
+        </Pressable>
+        <View style={s.historyHeaderCopy}>
+          <Text style={s.eyebrow}>ORDER HISTORY</Text>
+          <Text style={s.historyHeaderTitle}>All store orders</Text>
+          <Text style={s.historyHeaderSub}>Every order sent to your store, including rejected and cancelled ones.</Text>
+        </View>
+      </View>
+      <ScrollView style={s.flex} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={p.loading} onRefresh={p.onReload} tintColor={c.green}/>}>
+        <View style={s.historyBanner}>
+          <View style={s.historyBannerIcon}><Ionicons name="history" size={19} color={c.green}/></View>
+          <View style={s.historyBannerCopy}>
+            <Text style={s.historyBannerTitle}>{p.orders.length} {p.orders.length===1?'store order':'store orders'}</Text>
+            <Text style={s.historyBannerText}>Filter by date range or status to inspect past and active orders.</Text>
+          </View>
+        </View>
+        <OrderDateFilter value={orderPeriod} colors={c} onChange={setOrderPeriod}/>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.historyFilterBar} contentContainerStyle={s.historyFilterContent}>
+          {VENDOR_HISTORY_FILTERS.map(chip=>{
+            const selected=historyFilter===chip.id;
+            return <Pressable key={chip.id} accessibilityRole="button" accessibilityState={{selected}} onPress={()=>setHistoryFilter(chip.id)} style={[s.historyChip,selected&&s.historyChipActive]}>
+              <Text style={[s.historyChipText,selected&&s.historyChipTextActive]}>{chip.label}</Text>
+            </Pressable>;
+          })}
+        </ScrollView>
+        {p.loading&&!p.orders.length?<ActivityIndicator style={s.loader} color={c.green}/>
+        :historyOrders.length?historyOrders.map(order=><OrderCard key={order.id} order={order} busy={p.busyId===order.id} colors={c} onAction={p.onOrderAction} onVerifyPickup={p.onVerifyPickup} onCancel={p.onCancelOrder}/>)
+        :<>
+          <Empty title={p.orders.length===0?'No orders yet':'No matching orders'} body={p.orders.length===0?'Orders from customers will appear here once placed.':'Try clearing the date range or status filter to view more orders.'} c={c}/>
+          {(orderPeriod!=='All time'||historyFilter!=='all')&&<Pressable accessibilityRole="button" onPress={()=>{setOrderPeriod('All time');setHistoryFilter('all');}} style={s.clearOrderFilter}><Text style={s.link}>Reset history filters</Text></Pressable>}
+        </>}
+      </ScrollView>
+    </SafeAreaView>
+  </Modal></View>;
 }
 
 
@@ -195,7 +285,7 @@ function ProfileAction({icon,title,onPress,c,last=false}:{icon:string;title:stri
   </Pressable>;
 }
 function Metric({label,value,c}:{label:string;value:number;c:AppColors}){return <View style={styles(c).metric}><Text style={styles(c).metricValue}>{value}</Text><Text style={styles(c).metricLabel}>{label}</Text></View>}
-function Heading({eyebrow,title,body,c,onRefresh}:{eyebrow:string;title:string;body:string;c:AppColors;onRefresh?:()=>void}){const s=styles(c);return <View style={s.heading}><Text style={s.eyebrow}>{eyebrow}</Text><View style={s.headingRow}><Text style={s.headingTitle}>{title}</Text>{onRefresh&&<Pressable accessibilityRole="button" accessibilityLabel="Refresh orders" hitSlop={10} onPress={onRefresh} style={s.refresh}><Ionicons name="refresh-outline" size={19} color={c.green}/></Pressable>}</View><Text style={s.headingBody}>{body}</Text></View>}
+function Heading({eyebrow,title,body,c,loading,onRefresh,onHistory}:{eyebrow:string;title:string;body:string;c:AppColors;loading?:boolean;onRefresh?:()=>void;onHistory?:()=>void}){const s=styles(c);return <View style={s.heading}><Text style={s.eyebrow}>{eyebrow}</Text><View style={s.headingRow}><Text style={s.headingTitle}>{title}</Text>{(onRefresh||onHistory)&&<View style={s.headingActions}>{onRefresh&&<Pressable accessibilityRole="button" accessibilityLabel="Refresh orders" disabled={loading} hitSlop={10} onPress={onRefresh} style={s.refresh}>{loading?<ActivityIndicator size="small" color={c.green}/>:<Ionicons name="refresh-outline" size={19} color={c.green}/>}</Pressable>}{onHistory&&<Pressable accessibilityRole="button" accessibilityLabel="Order history" accessibilityHint="Shows all orders ever sent to your store" hitSlop={10} onPress={onHistory} style={s.historyAction}><Ionicons name="history" size={20} color={c.green}/></Pressable>}</View>}</View><Text style={s.headingBody}>{body}</Text></View>}
 function OrderDateFilter({value,colors:c,onChange}:{value:OrderPeriod;colors:AppColors;onChange:(value:OrderPeriod)=>void}){
   const [open,setOpen]=useState(false);const s=orderDateFilterStyles(c);
   return <View style={s.wrap}>
@@ -259,7 +349,41 @@ const styles=(c:AppColors)=>StyleSheet.create({
   headingRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:5},
   headingTitle:{color:c.ink,fontSize:vendorType.display,fontWeight:'900',letterSpacing:-.8},
   headingBody:{color:c.muted,fontSize:vendorType.body,lineHeight:19,marginTop:4},
+  headingActions:{flexDirection:'row',alignItems:'center',gap:8},
   refresh:{width:40,height:40,alignItems:'center',justifyContent:'center',borderRadius:vendorRadius.md,backgroundColor:c.card,borderWidth:1,borderColor:c.line},
+  historyAction:{width:40,height:40,alignItems:'center',justifyContent:'center',borderRadius:vendorRadius.md,backgroundColor:c.mint},
+  orderSegment:{minHeight:48,flexDirection:'row',gap:4,padding:4,borderRadius:vendorRadius.md,borderWidth:1,borderColor:c.line,backgroundColor:c.cream},
+  orderSegmentItem:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:5,paddingHorizontal:6,borderRadius:vendorRadius.sm},
+  orderSegmentActive:{backgroundColor:c.card,shadowColor:'#153a2b',shadowOpacity:.08,shadowRadius:5,shadowOffset:{width:0,height:2},elevation:2},
+  orderSegmentText:{fontSize:12,fontWeight:'700',color:c.muted},
+  orderSegmentTextActive:{color:c.green,fontWeight:'900'},
+  orderSegmentCount:{minWidth:18,height:18,paddingHorizontal:5,borderRadius:9,alignItems:'center',justifyContent:'center',backgroundColor:c.line},
+  orderSegmentCountActive:{backgroundColor:c.mint},
+  orderSegmentCountText:{fontSize:10,fontWeight:'800',color:c.muted},
+  orderSegmentCountTextActive:{color:c.green},
+  orderListHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:vendorSpace.xs},
+  orderListTitle:{fontSize:10,fontWeight:'900',letterSpacing:1.1,color:c.ink},
+  orderListSubtitle:{fontSize:10,color:c.muted,marginTop:3},
+  orderCountBadge:{minWidth:36,height:30,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:5,paddingHorizontal:8,borderRadius:vendorRadius.pill,backgroundColor:c.mint},
+  orderCountText:{fontSize:11,fontWeight:'900',color:c.green},
+  historyLinkButton:{minHeight:42,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:7,alignSelf:'center',paddingHorizontal:16,borderRadius:vendorRadius.pill,borderWidth:1,borderColor:c.line,backgroundColor:c.card},
+  historySafe:{flex:1,backgroundColor:c.paper},
+  historyHeader:{flexDirection:'row',alignItems:'center',gap:12,paddingHorizontal:vendorSpace.lg,paddingVertical:vendorSpace.md,borderBottomWidth:1,borderBottomColor:c.line,backgroundColor:c.paper},
+  historyBackButton:{width:42,height:42,borderRadius:vendorRadius.md,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
+  historyHeaderCopy:{flex:1,minWidth:0},
+  historyHeaderTitle:{fontSize:20,fontWeight:'900',color:c.ink,marginTop:2},
+  historyHeaderSub:{fontSize:11,lineHeight:16,color:c.muted,marginTop:2},
+  historyBanner:{flexDirection:'row',alignItems:'flex-start',gap:11,padding:13,borderRadius:vendorRadius.md,borderWidth:1,borderColor:c.line,backgroundColor:c.card},
+  historyBannerIcon:{width:38,height:38,borderRadius:vendorRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:c.mint},
+  historyBannerCopy:{flex:1,minWidth:0},
+  historyBannerTitle:{fontSize:13,fontWeight:'900',color:c.ink},
+  historyBannerText:{fontSize:11,lineHeight:16,color:c.muted,marginTop:2},
+  historyFilterBar:{flexGrow:0},
+  historyFilterContent:{gap:8,paddingRight:8},
+  historyChip:{minHeight:34,paddingHorizontal:12,borderRadius:vendorRadius.pill,borderWidth:1,borderColor:c.line,backgroundColor:c.card,alignItems:'center',justifyContent:'center'},
+  historyChipActive:{backgroundColor:c.green,borderColor:c.green},
+  historyChipText:{fontSize:11,fontWeight:'800',color:c.muted},
+  historyChipTextActive:{color:'white'},
   hero:{padding:vendorSpace.lg,backgroundColor:c.isDark?'#194c3a':c.green,borderRadius:vendorRadius.xl,overflow:'hidden'},
   heroTitle:{color:'white',fontSize:22,fontWeight:'900',letterSpacing:-.4},
   metrics:{flexDirection:'row',alignItems:'stretch',marginTop:vendorSpace.lg,paddingVertical:vendorSpace.md,borderRadius:vendorRadius.md,backgroundColor:'rgba(255,255,255,.11)'},
@@ -345,6 +469,7 @@ const styles=(c:AppColors)=>StyleSheet.create({
   logout:{minHeight:48,flexDirection:'row',justifyContent:'center',alignItems:'center',gap:8,marginTop:vendorSpace.md,marginBottom:vendorSpace.sm,borderRadius:vendorRadius.md,backgroundColor:c.isDark?'#392a20':'#fdf0ed'},
   logoutText:{fontSize:12,fontWeight:'900',color:c.isDark?'#f0877a':'#a34232'},
   empty:{alignItems:'center',padding:vendorSpace.xl,marginTop:vendorSpace.sm,borderWidth:1,borderColor:c.line,borderRadius:vendorRadius.lg,backgroundColor:c.card},
+  clearOrderFilter:{alignSelf:'center',paddingVertical:10,paddingHorizontal:14},
   emptyIcon:{width:48,height:48,alignItems:'center',justifyContent:'center',borderRadius:vendorRadius.md,backgroundColor:c.cream},
   emptyTitle:{color:c.ink,fontWeight:'900',fontSize:15,textAlign:'center',marginTop:vendorSpace.sm},
   emptyBody:{color:c.muted,fontSize:12,lineHeight:18,marginTop:5,textAlign:'center'},

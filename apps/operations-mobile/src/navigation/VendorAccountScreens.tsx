@@ -26,6 +26,57 @@ export function VendorPasswordScreen({colors:c,onBack,token,onSaved}:{colors:App
   return <View style={s.pageScreen}><View style={s.fixedHeader}><Back onBack={onBack} c={c}/><Text style={s.kicker}>SECURITY</Text><Text style={s.title}>Change password</Text><Text style={s.subtitle}>Choose a strong password you do not use elsewhere.</Text></View><ScrollView contentContainerStyle={s.page}>{done&&<View style={s.success}><Ionicons name="checkmark-circle" size={19} color={c.green}/><Text style={s.successText}>Your password was changed.</Text></View>}<Field label="Current password" value={current} onChangeText={setCurrent} secureTextEntry c={c}/><Field label="New password" value={next} onChangeText={setNext} secureTextEntry placeholder="At least 10 characters" c={c}/><Field label="Confirm new password" value={confirm} onChangeText={setConfirm} secureTextEntry c={c}/>{error?<Text style={s.error}>{error}</Text>:null}<PrimaryButton title={busy?'Updating password…':'Update password'} disabled={busy} onPress={()=>void save()} style={s.button}/></ScrollView></View>;
 }
 
+export function VendorDeleteAccountScreen({token,colors:c,onBack,onDeleted}:{token:string;colors:AppColors;onBack:()=>void;onDeleted:()=>void}){
+  const s=styles(c);
+  const [password,setPassword]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const remove=async()=>{
+    setBusy(true);
+    setError('');
+    try{
+      await api.delete('/auth/account',token,{password});
+      onDeleted();
+    }catch(reason){
+      setError(reason instanceof Error?reason.message:'Could not delete your account.');
+    }finally{
+      setBusy(false);
+    }
+  };
+  const confirm=()=>{
+    setError('');
+    if(!password){setError('Enter your current password to continue.');return;}
+    const message='Your vendor store will be closed, your personal details and saved addresses will be removed, and you will be signed out. Existing order records may be retained where required. This cannot be undone.';
+    if(Platform.OS==='web'){
+      if(window.confirm(`Delete your Smile account?\n\n${message}`))void remove();
+      return;
+    }
+    Alert.alert('Delete your Smile account?',message,[
+      {text:'Keep account',style:'cancel'},
+      {text:'Delete account',style:'destructive',onPress:()=>void remove()},
+    ]);
+  };
+  return <View style={s.pageScreen}>
+    <View style={s.fixedHeader}>
+      <Back onBack={onBack} c={c}/>
+      <Text style={s.kicker}>ACCOUNT & PRIVACY</Text>
+      <Text style={s.title}>Delete account</Text>
+      <Text style={s.subtitle}>Review what happens before permanently closing your vendor account.</Text>
+    </View>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
+      <View style={s.warningCard}>
+        <Ionicons name="warning-outline" size={22} color={c.isDark?'#f0877a':'#a34232'}/>
+        <Text style={s.warningText}>This action is permanent. Your store listing will be closed, your personal details and saved addresses will be removed, and all active sessions will end. Complete or cancel active orders first. Order and financial records may be retained where required.</Text>
+      </View>
+      <Field label="Current password" value={password} onChangeText={setPassword} secureTextEntry placeholder="Enter your current password" c={c}/>
+      {error?<Text accessibilityRole="alert" style={s.error}>{error}</Text>:null}
+      <Pressable accessibilityRole="button" disabled={busy} onPress={confirm} style={[s.dangerButton,busy&&{opacity:.6}]}>
+        {busy?<ActivityIndicator color="white"/>:<Text style={s.dangerButtonText}>Permanently delete account</Text>}
+      </Pressable>
+    </ScrollView>
+  </View>;
+}
+
 export function OperationsProfileScreen({colors:c,onBack,token,name:initialName,email:initialEmail,phone:initialPhone,onSaved}:{colors:AppColors;onBack:()=>void;token:string;name:string;email:string;phone:string|null;onSaved:(profile:VendorUserProfile)=>void}){
   const s=styles(c);const [name,setName]=useState(initialName);const [phone,setPhone]=useState(initialPhone??'');const [email,setEmail]=useState(initialEmail);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   useEffect(()=>{let active=true;void api.get<VendorUserProfile>('/auth/profile',token).then(profile=>{if(active){setName(profile.name);setPhone(profile.phone??'');setEmail(profile.email);}}).catch(reason=>{if(active)setError(reason instanceof Error?reason.message:'Could not load your profile.');});return()=>{active=false;};},[token]);
@@ -35,21 +86,21 @@ export function OperationsProfileScreen({colors:c,onBack,token,name:initialName,
 
 export function OperationsInfoScreen({kind,role,colors:c,onBack}:{kind:'help'|'about'|'privacy';role:'Vendor'|'Rider';colors:AppColors;onBack:()=>void}){
   const s=styles(c);const content={
-    help:{title:'Help & support',intro:`Need a hand with your ${role.toLowerCase()} workspace?`,items:[['Orders & deliveries',role==='Vendor'?'Manage customer orders from the Orders tab and check each order for its current status.':'Your assigned routes and delivery proofs are available in Deliveries.'],['Account & access','You can manage your profile, password, and app preferences from Account.'],['Contact Smile','For help with business access, payouts, rider access, or account closure, contact Smile support.']]},
+    help:{title:'Help & support',intro:`Need a hand with your ${role.toLowerCase()} workspace?`,items:[['Orders & deliveries',role==='Vendor'?'Manage customer orders from the Orders tab and check each order for its current status.':'Your assigned routes and delivery proofs are available in Deliveries.'],['Account & access','You can manage your profile, password, preferences, or delete your account from Account or Settings.'],['Contact Smile','For help with business access, payouts, rider access, or active orders, contact Smile support.']]},
     about:{title:'About Smile',intro:'Local service, delivered with a smile.',items:[['Smile Operations','Version 0.1.0'],['Your workspace',`${role} tools for managing day-to-day operations on Smile.`],['Built for local delivery','Smile connects customers, local businesses, and delivery riders.']]},
-    privacy:{title:'Privacy policy',intro:'How Smile uses your account information.',items:[['Account details','Your name, email, and phone number identify your account and help Smile contact you.'],['Workspace information',role==='Vendor'?'Store details, order records, and payout setup are used to operate your vendor workspace.':'Your rider application, service area, availability, and delivery records are used to operate your rider workspace.'],['Location data','Rider location is shared only while foreground location sharing is active in the app.'],['Your choices','You can update profile details and manage your app preferences. Business account closure must be requested through Smile support.']]},
+    privacy:{title:'Privacy policy',intro:'How Smile uses your account information.',items:[['Account details','Your name, email, and phone number identify your account and help Smile contact you.'],['Workspace information',role==='Vendor'?'Store details, order records, and payout setup are used to operate your vendor workspace.':'Your rider application, service area, availability, and delivery records are used to operate your rider workspace.'],['Location data','Rider location is shared only while foreground location sharing is active in the app.'],['Your choices','You can update profile details, manage app preferences, or delete your account from Account or Settings once active orders and deliveries are finished.']]},
   }[kind];
   return <ScrollView style={s.pageScreen} contentContainerStyle={s.page}><Back onBack={onBack} c={c}/><Text style={s.kicker}>{kind==='privacy'?'ACCOUNT & PRIVACY':'SMILE OPERATIONS'}</Text><Text style={s.title}>{content.title}</Text><Text style={s.subtitle}>{content.intro}</Text>{content.items.map(([title,detail])=><View key={title} style={s.infoCard}><Text style={s.rowTitle}>{title}</Text><Text style={s.rowCopy}>{detail}</Text></View>)}</ScrollView>;
 }
 
-export function VendorSettingsScreen({colors:c,onBack,dark,onTheme,onPrivacy,onHelp,onAbout,role}:{colors:AppColors;onBack:()=>void;dark:boolean;onTheme:()=>void;onPrivacy:()=>void;onHelp:()=>void;onAbout:()=>void;role:'Vendor'|'Rider'}){
-  const s=styles(c);return <ScrollView style={s.pageScreen} contentContainerStyle={s.page}><Back onBack={onBack} c={c}/><Text style={s.kicker}>PREFERENCES</Text><Text style={s.title}>Settings</Text><Text style={s.subtitle}>Make Smile work the way you do.</Text><Text style={s.section}>APPEARANCE</Text><View style={s.setting}><View style={s.settingIcon}><Ionicons name={dark?'moon-outline':'sunny-outline'} size={21} color={c.green}/></View><View style={{flex:1}}><Text style={s.rowTitle}>Dark mode</Text><Text style={s.rowCopy}>{dark?'Dark appearance is on':'Use a darker appearance'}</Text></View><Switch value={dark} onValueChange={onTheme} trackColor={{false:c.line,true:c.green}} thumbColor="white"/></View><Text style={s.section}>APP</Text><Pressable accessibilityRole="button" onPress={()=>Platform.OS==='web'?window.alert('English is currently the available app language.'):Alert.alert('Language','English is currently the available app language.')} style={s.setting}><View style={s.settingIcon}><Ionicons name="language-outline" size={21} color={c.green}/></View><View style={{flex:1}}><Text style={s.rowTitle}>Language</Text><Text style={s.rowCopy}>English</Text></View><Ionicons name="chevron-forward" size={20} color={c.muted}/></Pressable><Text style={s.section}>ACCOUNT & PRIVACY</Text><InfoAction icon="help-circle-outline" title="Help & support" onPress={onHelp} c={c}/><InfoAction icon="shield-checkmark-outline" title="Privacy policy" onPress={onPrivacy} c={c}/><InfoAction icon="information-circle-outline" title="About Smile" onPress={onAbout} c={c}/><View style={s.info}><Ionicons name="information-circle-outline" size={20} color={c.green}/><Text style={s.rowCopy}>Smile Operations · {role} workspace · Version 0.1.0</Text></View></ScrollView>;
+export function VendorSettingsScreen({colors:c,onBack,dark,onTheme,onPrivacy,onHelp,onAbout,onDeleteAccount,role}:{colors:AppColors;onBack:()=>void;dark:boolean;onTheme:()=>void;onPrivacy:()=>void;onHelp:()=>void;onAbout:()=>void;onDeleteAccount:()=>void;role:'Vendor'|'Rider'}){
+  const s=styles(c);return <ScrollView style={s.pageScreen} contentContainerStyle={s.page}><Back onBack={onBack} c={c}/><Text style={s.kicker}>PREFERENCES</Text><Text style={s.title}>Settings</Text><Text style={s.subtitle}>Make Smile work the way you do.</Text><Text style={s.section}>APPEARANCE</Text><View style={s.setting}><View style={s.settingIcon}><Ionicons name={dark?'moon-outline':'sunny-outline'} size={21} color={c.green}/></View><View style={{flex:1}}><Text style={s.rowTitle}>Dark mode</Text><Text style={s.rowCopy}>{dark?'Dark appearance is on':'Use a darker appearance'}</Text></View><Switch value={dark} onValueChange={onTheme} trackColor={{false:c.line,true:c.green}} thumbColor="white"/></View><Text style={s.section}>APP</Text><Pressable accessibilityRole="button" onPress={()=>Platform.OS==='web'?window.alert('English is currently the available app language.'):Alert.alert('Language','English is currently the available app language.')} style={s.setting}><View style={s.settingIcon}><Ionicons name="language-outline" size={21} color={c.green}/></View><View style={{flex:1}}><Text style={s.rowTitle}>Language</Text><Text style={s.rowCopy}>English</Text></View><Ionicons name="chevron-forward" size={20} color={c.muted}/></Pressable><Text style={s.section}>ACCOUNT & PRIVACY</Text><InfoAction icon="help-circle-outline" title="Help & support" onPress={onHelp} c={c}/><InfoAction icon="shield-checkmark-outline" title="Privacy policy" onPress={onPrivacy} c={c}/><InfoAction icon="information-circle-outline" title="About Smile" onPress={onAbout} c={c}/><InfoAction icon="trash-outline" title="Delete account" destructive onPress={onDeleteAccount} c={c}/><View style={s.info}><Ionicons name="information-circle-outline" size={20} color={c.green}/><Text style={s.rowCopy}>Smile Operations · {role} workspace · Version 0.1.0</Text></View></ScrollView>;
 }
 
 type FieldProps={label:string;c:AppColors;value:string;onChangeText:(value:string)=>void}&Pick<TextInputProps,'placeholder'|'secureTextEntry'|'keyboardType'|'maxLength'|'multiline'|'editable'>;
 function Field({label,c,...props}:FieldProps){const [visible,setVisible]=useState(false);const s=styles(c);return <View style={s.field}><Text style={s.fieldLabel}>{label}</Text><View><TextInput {...props} accessibilityLabel={label} secureTextEntry={props.secureTextEntry&&!visible} placeholderTextColor={c.muted} autoCapitalize={props.secureTextEntry?'none':'words'} style={[s.input,props.secureTextEntry&&{paddingRight:48}]}/>{props.secureTextEntry&&<Pressable accessibilityRole="button" accessibilityLabel={`${visible?'Hide':'Show'} ${label.toLowerCase()}`} onPress={()=>setVisible(current=>!current)} style={s.passwordVisibility}><Ionicons name={visible?'eye-off-outline':'eye-outline'} size={19} color={c.muted}/></Pressable>}</View></View>}
 function Back({onBack,c}:{onBack:()=>void;c:AppColors}){return <Pressable accessibilityRole="button" accessibilityLabel="Back to account" onPress={onBack} style={styles(c).back}><Ionicons name="chevron-back" size={22} color={c.green}/><Text style={styles(c).backText}>Account</Text></Pressable>}
-function InfoAction({icon,title,onPress,c}:{icon:string;title:string;onPress:()=>void;c:AppColors}){return <Pressable accessibilityRole="button" onPress={onPress} style={styles(c).setting}><View style={styles(c).settingIcon}><Ionicons name={icon} size={21} color={c.green}/></View><Text style={{flex:1,color:c.ink,fontSize:13,fontWeight:'800'}}>{title}</Text><Ionicons name="chevron-forward" size={20} color={c.muted}/></Pressable>}
+function InfoAction({icon,title,onPress,c,destructive=false}:{icon:string;title:string;onPress:()=>void;c:AppColors;destructive?:boolean}){const s=styles(c);return <Pressable accessibilityRole="button" onPress={onPress} style={[s.setting,destructive&&s.dangerSetting]}><View style={[s.settingIcon,destructive&&s.dangerSettingIcon]}><Ionicons name={icon} size={21} color={destructive?(c.isDark?'#f0877a':'#a34232'):c.green}/></View><Text style={{flex:1,color:destructive?(c.isDark?'#f0877a':'#a34232'):c.ink,fontSize:13,fontWeight:'800'}}>{title}</Text><Ionicons name="chevron-forward" size={20} color={c.muted}/></Pressable>}
 type VendorUserProfile={name:string;email:string;phone:string|null};
 const styles=(c:AppColors)=>StyleSheet.create({
   pageScreen:{flex:1,backgroundColor:c.paper},
@@ -87,7 +138,13 @@ const styles=(c:AppColors)=>StyleSheet.create({
   back:{minHeight:42,flexDirection:'row',alignItems:'center',gap:4,alignSelf:'flex-start',marginBottom:vendorSpace.md,paddingHorizontal:10,borderRadius:vendorRadius.md,backgroundColor:c.cream},
   backText:{fontSize:12,fontWeight:'800',color:c.green},
   section:{fontSize:9,fontWeight:'900',letterSpacing:1.2,color:c.green,marginTop:vendorSpace.xl,marginBottom:8},
-  setting:{minHeight:67,flexDirection:'row',alignItems:'center',gap:11,padding:11,borderRadius:vendorRadius.md,borderWidth:1,borderColor:c.line,backgroundColor:c.card},
+  setting:{minHeight:67,flexDirection:'row',alignItems:'center',gap:11,padding:11,marginBottom:8,borderRadius:vendorRadius.md,borderWidth:1,borderColor:c.line,backgroundColor:c.card},
   settingIcon:{width:39,height:39,borderRadius:vendorRadius.md,alignItems:'center',justifyContent:'center',backgroundColor:c.cream},
+  dangerSetting:{borderColor:c.isDark?'#58332d':'#f1d8d2',backgroundColor:c.isDark?'#241b19':'#fff8f6',marginTop:4},
+  dangerSettingIcon:{backgroundColor:c.isDark?'#392a20':'#fdf0ed'},
+  warningCard:{flexDirection:'row',alignItems:'flex-start',gap:10,padding:14,marginTop:10,borderWidth:1,borderColor:c.isDark?'#58332d':'#f1d8d2',borderRadius:vendorRadius.md,backgroundColor:c.isDark?'#241b19':'#fff8f6'},
+  warningText:{flex:1,fontSize:12,lineHeight:18,color:c.isDark?'#f0877a':'#a34232'},
+  dangerButton:{minHeight:48,marginTop:16,borderRadius:vendorRadius.sm,alignItems:'center',justifyContent:'center',backgroundColor:'#a34232'},
+  dangerButtonText:{fontSize:13,fontWeight:'900',color:'white'},
   info:{flexDirection:'row',alignItems:'center',gap:9,marginTop:12,padding:13,borderRadius:vendorRadius.md,backgroundColor:c.cream},
 });

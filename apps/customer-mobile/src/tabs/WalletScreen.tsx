@@ -14,6 +14,10 @@ type Transaction = {
   amountMinor: number;
   status: string;
   provider: string;
+  direction?: 'CREDIT' | 'DEBIT';
+  type?: string;
+  title?: string;
+  subtitle?: string | null;
   isDemo: boolean;
   createdAt: string;
   order?: { id?: string|null; displayNumber?: number|null; vendor?: { name?: string|null }|null }|null;
@@ -305,14 +309,14 @@ export default function WalletScreen({ token, demoMode, colors, onSignIn, onHist
       const status=transaction.status.toUpperCase();
       const statusInfo=statusDetails(status,p);
       const provider=transaction.provider.toLowerCase();
-      const methodLabel=provider==='wallet'?'Smile wallet':provider==='paystack'?'Paystack':transaction.isDemo?'Demo checkout':'Order payment';
+      const methodLabel=provider==='wallet'?'Smile wallet':provider==='bank_transfer'?'Bank transfer':provider==='paystack'?'Paystack':transaction.isDemo?'Demo checkout':'Order payment';
       const orderId=transaction.order?.id??null;
-      const isTopUp=orderId==='DEMO-TOP-UP';
-      const orderLabel=isTopUp?'Wallet top-up':orderId?formatOrderNumber(transaction.order?.displayNumber,orderId):'Wallet activity';
-      const vendorName=transaction.order?.vendor?.name??(isTopUp?'Wallet top-up':'Smile order');
-      const incoming=status==='REFUNDED'||isTopUp;
-      const amountPrefix=status==='REFUNDED'?'+':status==='FAILED'?'':'−';
-      const amountColor=status==='REFUNDED'?p.primary:status==='PENDING'?p.warning:status==='FAILED'?p.muted:p.ink;
+      const isTopUp=orderId==='DEMO-TOP-UP'||transaction.type==='TOPUP';
+      const orderLabel=isTopUp?(transaction.subtitle??'Wallet top-up'):orderId?formatOrderNumber(transaction.order?.displayNumber,orderId):'Wallet activity';
+      const vendorName=transaction.title??transaction.order?.vendor?.name??(isTopUp?'Wallet top-up':'Smile order');
+      const incoming=transaction.direction?transaction.direction==='CREDIT':(status==='REFUNDED'||isTopUp);
+      const amountPrefix=status==='FAILED'?'':incoming?'+':'−';
+      const amountColor=incoming?p.primary:status==='PENDING'||status==='REFUND_PENDING'?p.warning:status==='FAILED'?p.muted:p.ink;
       return <View key={transaction.id} style={s.transaction}>
         <View style={[s.transactionIcon,{backgroundColor:statusInfo.background}]}><Ionicons name={incoming?'trending-up':'trending-down'} size={20} color={statusInfo.color}/></View>
         <View style={s.transactionInfo}>

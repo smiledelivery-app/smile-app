@@ -6,15 +6,17 @@ import helmet from 'helmet';
 import { PrismaClient, Role, VendorStatus, OrderStatus, DeliveryStatus, RiderOfferStatus, SupportTicketCategory, SupportTicketStatus, Prisma } from '@prisma/client';
 import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { calculateOrderAmounts, canVendorTransition } from './order-rules.js';
+import { BASE_DELIVERY_FEE_MINOR, calculateDeliveryFeeMinor, calculateOrderAmounts, canVendorTransition, MIN_DELIVERY_FEE_MINOR, SERVICE_FEE_MINOR } from './order-rules.js';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from './catalog-rules.js';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
 import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
-import { createProofCode } from './proof-codes.js';
+import { createProofCode, proofSubject } from './proof-codes.js';
 import { createRiderNinUploadSignature, createRiderProfileImageUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
-import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
+import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackRefund, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
+import { buildCustomerWalletActivity, isCancelledOrRefundOrderStatus, parsePaystackWebhookDva, parsePaystackWebhookRefund, shouldAllowOrderPayment } from './payment-rules.js';
 import { checkPhoneVerification, PhoneVerificationError, PHONE_VERIFICATION_EXPIRY_MINUTES, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
+import { accountDeletionPrecheckError } from './account-deletion.js';
 import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
 import { vendorOperatingHoursInput } from './vendor-hours.js';
 
@@ -43,7 +45,9 @@ async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipien
       :status===OrderStatus.CANCELLED&&isVendor
       ?{title:'Order cancelled',body:`Order #${String(order.displayNumber).padStart(9,'0')} was cancelled.`}
         :status===OrderStatus.RIDER_ASSIGNED&&(isVendor||isRider)
-        ?{title:isRider?'New delivery assigned':'Rider coming to pick up',body:`A rider is on the way to ${order.vendor.name} for order #${String(order.displayNumber).padStart(9,'0')}.`}
+        ?{title:isRider?'New delivery assigned':'Rider coming to pick up',body:isRider?`You accepted order #${String(order.displayNumber).padStart(9,'0')} from ${order.vendor.name}. Show your pickup code to the vendor.`:`A rider accepted order #${String(order.displayNumber).padStart(9,'0')} and is coming to pick it up. Ask for their 6-digit pickup code.`}
+          :status===OrderStatus.RIDER_ASSIGNED
+          ?{title:'Rider assigned',body:`A rider accepted order #${String(order.displayNumber).padStart(9,'0')}. Open Orders to view your 6-digit delivery code.`}
           :message;
     return {
       userId,title:copy.title,body:copy.body,type:`ORDER_${status}`,orderId:order.id,
@@ -135,24 +139,25 @@ async function pruneExpiredGoogleCoordinates() {
     prisma.vendor.updateMany({where:{geocodedAt:{lt:cutoff}},data:{latitude:null,longitude:null,geocodedAt:null}}),
   ]);
 }
-const deliveryOtp = (deliveryId:string) => {
+const deliveryOtp = (deliveryId:string,assignedRiderId:string) => {
   const secret=deliveryProofSecret();
   if(!secret) throw new Error('DELIVERY_OTP_SECRET is not configured.');
-  return createProofCode(secret,'customer-delivery',deliveryId);
+  return createProofCode(secret,'customer-delivery',proofSubject(deliveryId,assignedRiderId));
 };
-const vendorPickupOtp = (deliveryId:string) => {
+const vendorPickupOtp = (deliveryId:string,assignedRiderId:string) => {
   const secret=deliveryProofSecret();
   if(!secret) throw new Error('DELIVERY_OTP_SECRET is not configured.');
-  return createProofCode(secret,'vendor-pickup',deliveryId);
+  return createProofCode(secret,'vendor-pickup',proofSubject(deliveryId,assignedRiderId));
 };
 async function dispatchDeliveryOffers(deliveryId:string) {
-  const delivery=await prisma.delivery.findUnique({where:{id:deliveryId},include:{order:{include:{vendor:true}},offers:{select:{riderId:true,status:true,expiresAt:true}}}});
+  const delivery=await prisma.delivery.findUnique({where:{id:deliveryId},include:{order:{include:{vendor:true}},offers:{select:{id:true,riderId:true,status:true,expiresAt:true}}}});
   if(!delivery||delivery.assignedRiderId) return 0;
   if(delivery.offers.some(offer=>offer.status===RiderOfferStatus.PENDING&&offer.expiresAt>new Date()))return 0;
   const vendor=delivery.order.vendor;
   const pickup=await freshVendorCoordinates(vendor);
   if(!pickup) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
-  const previouslyOffered=new Set(delivery.offers.map(offer=>offer.riderId));
+  const blockedFromReoffer=new Set(delivery.offers.filter(offer=>offer.status!==RiderOfferStatus.EXPIRED).map(offer=>offer.riderId));
+  const expiredOfferRiders=new Set(delivery.offers.filter(offer=>offer.status===RiderOfferStatus.EXPIRED).map(offer=>offer.riderId));
   const freshSince=new Date(Date.now()-10*60_000);
   const candidateRiders=await prisma.riderProfile.findMany({where:{status:VendorStatus.APPROVED,available:true,user:{isDemo:false},location:{is:{updatedAt:{gte:freshSince}}},offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}}},deliveries:{none:{status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}},include:{location:true}});
   const riders=(await Promise.all(candidateRiders.map(async rider=>({rider,count:await cancellationCount(rider.userId)})))).filter(item=>item.count<cancellationLimits.RIDER).map(item=>item.rider);
@@ -161,7 +166,11 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   const configuredLimit=Number.parseInt(process.env.GOOGLE_ROUTES_MAX_ORIGINS??'25',10);
   const shortlistLimit=Number.isFinite(configuredLimit)?Math.max(1,Math.min(49,configuredLimit)):25;
   const located=riders.flatMap(rider=>rider.location?[{id:rider.id,latitude:Number(rider.location.latitude),longitude:Number(rider.location.longitude),serviceArea:rider.serviceArea,rider}]:[]);
-  const shortlist=nearestEligibleRiders(located,pickup,area,previouslyOffered,maxDistance,shortlistLimit);
+  const unoffered=new Set([...blockedFromReoffer,...expiredOfferRiders]);
+  let shortlist=nearestEligibleRiders(located,pickup,area,unoffered,maxDistance,shortlistLimit);
+  if(!shortlist.length&&expiredOfferRiders.size){
+    shortlist=nearestEligibleRiders(located,pickup,area,blockedFromReoffer,maxDistance,shortlistLimit);
+  }
   const apiKey=mappingConfigured('routes');
   let nearby:Array<{rider:(typeof shortlist)[number]['rider'];km:number;meters:number}> = [];
   if(shortlist.length&&apiKey){
@@ -180,24 +189,47 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   const createdCount=await prisma.$transaction(async tx=>{
     const current=await tx.delivery.findUnique({where:{id:deliveryId},include:{offers:{where:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}},select:{id:true}}}});
     if(!current||current.assignedRiderId||current.offers.length)return 0;
-    const created=await tx.riderOffer.createMany({data:nearby.map(({rider,meters})=>({deliveryId,riderId:rider.id,pickupDistanceMeters:meters,expiresAt})),skipDuplicates:true});
-    if(!created.count)return 0;
+    let offersSent=0;
+    for(const {rider,meters} of nearby){
+      const existing=delivery.offers.find(offer=>offer.riderId===rider.id);
+      if(existing){
+        if(existing.status===RiderOfferStatus.EXPIRED){
+          const reopened=await tx.riderOffer.updateMany({where:{id:existing.id,status:RiderOfferStatus.EXPIRED},data:{status:RiderOfferStatus.PENDING,pickupDistanceMeters:meters,expiresAt}});
+          offersSent+=reopened.count;
+        }
+      }else{
+        const created=await tx.riderOffer.createMany({data:[{deliveryId,riderId:rider.id,pickupDistanceMeters:meters,expiresAt}],skipDuplicates:true});
+        offersSent+=created.count;
+      }
+    }
+    if(!offersSent)return 0;
     await tx.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.OFFERING}});
-    return created.count;
+    return offersSent;
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
   if(createdCount){
     const shortId=String(delivery.order.displayNumber).padStart(9,'0');
     const messages:NotificationInput[]=nearby.map(({rider})=>({
       userId:rider.userId,title:'New delivery available',
       body:`Pickup at ${vendor.name} · Order #${shortId}. Open the app to review this offer.`,
-      type:'RIDER_OFFER',orderId:delivery.order.id,eventKey:`rider-offer:${deliveryId}:${rider.userId}`,
+      type:'RIDER_OFFER',orderId:delivery.order.id,eventKey:`rider-offer:${deliveryId}:${rider.userId}:${expiresAt.getTime()}`,
     }));
     try{await createNotifications(prisma,messages);}catch(error){logNotificationError('rider_offer_notification_persistence_failed',error);}
   }
   return createdCount;
 }
 async function dispatchWaitingDeliveries() {
-  const waiting=await prisma.delivery.findMany({where:{status:DeliveryStatus.UNASSIGNED,order:{status:OrderStatus.READY_FOR_PICKUP}},select:{id:true},take:100});
+  const now=new Date();
+  await prisma.riderOffer.updateMany({where:{status:RiderOfferStatus.PENDING,expiresAt:{lte:now}},data:{status:RiderOfferStatus.EXPIRED}});
+  const waiting=await prisma.delivery.findMany({
+    where:{
+      assignedRiderId:null,
+      status:{in:[DeliveryStatus.UNASSIGNED,DeliveryStatus.OFFERING]},
+      order:{status:OrderStatus.READY_FOR_PICKUP},
+      offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:now}}},
+    },
+    select:{id:true},
+    take:100,
+  });
   for(const delivery of waiting) await dispatchDeliveryOffers(delivery.id);
 }
 function deriveKey(password:string,salt:string,length:number) {
@@ -243,15 +275,54 @@ async function provisionDva(userId:string) {
     dvaProvisioning.delete(userId);
   }
 }
+async function creditWalletInTx(
+  tx: Prisma.TransactionClient,
+  input: { userId: string; amountMinor: number; reference: string; type: string; orderId?: string; metadata?: Prisma.InputJsonValue },
+) {
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 1) throw new Error('INVALID_WALLET_AMOUNT');
+  const existing = await tx.walletTransaction.findUnique({ where: { reference: input.reference }, select: { id: true } });
+  if (existing) return { credited: false };
+  const wallet = await tx.wallet.upsert({ where: { userId: input.userId }, update: {}, create: { userId: input.userId, dvaStatus: 'PENDING' } });
+  const updated = await tx.wallet.update({ where: { id: wallet.id }, data: { balanceMinor: { increment: input.amountMinor } } });
+  await tx.walletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      userId: input.userId,
+      type: input.type,
+      direction: 'CREDIT',
+      amountMinor: input.amountMinor,
+      balanceAfter: updated.balanceMinor,
+      reference: input.reference,
+      orderId: input.orderId,
+      metadata: input.metadata,
+    },
+  });
+  return { credited: true, balanceMinor: updated.balanceMinor };
+}
 async function creditWallet(input:{userId:string;amountMinor:number;reference:string;type:string;orderId?:string;metadata?:Prisma.InputJsonValue}) {
   if(!Number.isSafeInteger(input.amountMinor)||input.amountMinor<1) throw new Error('INVALID_WALLET_AMOUNT');
-  return prisma.$transaction(async tx=>{
-    const existing=await tx.walletTransaction.findUnique({where:{reference:input.reference},select:{id:true}}); if(existing) return {credited:false};
-    const wallet=await tx.wallet.upsert({where:{userId:input.userId},update:{},create:{userId:input.userId,dvaStatus:'PENDING'}});
-    const updated=await tx.wallet.update({where:{id:wallet.id},data:{balanceMinor:{increment:input.amountMinor}}});
-    await tx.walletTransaction.create({data:{walletId:wallet.id,userId:input.userId,type:input.type,direction:'CREDIT',amountMinor:input.amountMinor,balanceAfter:updated.balanceMinor,reference:input.reference,orderId:input.orderId,metadata:input.metadata}});
-    return {credited:true,balanceMinor:updated.balanceMinor};
-  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  return prisma.$transaction(tx=>creditWalletInTx(tx,input),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+}
+async function estimateRouteDistanceMeters(
+  vendor: { id: string; address: string; latitude: Prisma.Decimal | null; longitude: Prisma.Decimal | null; geocodedAt: Date | null },
+  address: { id: string; line1: string; city: string; latitude: Prisma.Decimal | null; longitude: Prisma.Decimal | null; geocodedAt: Date | null },
+): Promise<number | null> {
+  const [vendorPoint, customerPoint] = await Promise.all([
+    freshVendorCoordinates(vendor),
+    freshAddressCoordinates(address),
+  ]);
+  if (!vendorPoint || !customerPoint) return null;
+  if (mappingConfigured('routes')) {
+    try {
+      const route = await drivingRoute(vendorPoint, customerPoint);
+      if (Number.isFinite(route.distanceMeters) && route.distanceMeters >= 0) {
+        return Math.round(route.distanceMeters);
+      }
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'order_quote_route_failed', error: error instanceof Error ? error.message : 'unknown' }));
+    }
+  }
+  return Math.round(distanceKm(vendorPoint.latitude, vendorPoint.longitude, customerPoint.latitude, customerPoint.longitude) * 1000);
 }
 async function settleVendorTransfer(reference:string,event:'transfer.success'|'transfer.failed'|'transfer.reversed') {
   const transaction=await prisma.walletTransaction.findUnique({where:{reference},select:{id:true,walletId:true,userId:true,amountMinor:true,status:true,type:true}});
@@ -272,12 +343,190 @@ async function debitWalletForOrder(userId:string,orderId:string,amountMinor:numb
     if(debited.count!==1) return {paid:false,replayed:false};
     const updated=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id},select:{balanceMinor:true}});
     await tx.walletTransaction.create({data:{walletId:wallet.id,userId,type:'ORDER_PAYMENT',direction:'DEBIT',amountMinor,balanceAfter:updated.balanceMinor,reference:`wallet_order_${orderId}`,orderId}});
-    const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
+    const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:{in:[OrderStatus.PENDING_PAYMENT,OrderStatus.PAYMENT_FAILED]}},data:{status:OrderStatus.CONFIRMED}});
     if(changed.count!==1) throw new Error('ORDER_PAYMENT_STATE_CONFLICT');
     await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.CONFIRMED,actorId:userId,note:'Wallet payment confirmed'}});
     await tx.payment.create({data:{orderId,amountMinor,status:'SUCCEEDED',provider:'wallet',providerReference:`wallet_order_${orderId}`}});
     return {paid:true,balanceMinor:updated.balanceMinor};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+}
+
+function emitWalletCreditNotification(
+  userId: string,
+  amountMinor: number,
+  reference: string,
+  kind: 'TOPUP' | 'DVA_TOPUP' | 'REFUND',
+  orderId?: string,
+) {
+  const formatted = `₦${(amountMinor / 100).toLocaleString('en-NG')}`;
+  const copy =
+    kind === 'DVA_TOPUP'
+      ? { title: 'Wallet deposit received', body: `Your bank transfer of ${formatted} was credited to your Smile wallet.` }
+      : kind === 'REFUND'
+        ? { title: 'Refund credited to wallet', body: `${formatted} was returned to your Smile wallet.` }
+        : { title: 'Wallet topped up', body: `${formatted} was added to your Smile wallet.` };
+  void createNotifications(prisma, [
+    { userId, title: copy.title, body: copy.body, type: 'WALLET_CREDITED', orderId, eventKey: `wallet-credit:${reference}` },
+  ]).catch((error) => logNotificationError('wallet_credit_notification_failed', error));
+}
+
+type OrderRefundTxOutcome =
+  | { kind: 'none' }
+  | { kind: 'demo' }
+  | { kind: 'wallet'; userId: string; amountMinor: number; reference: string }
+  | { kind: 'paystack'; paymentId: string; providerReference: string; amountMinor: number };
+
+async function refundPaidOrderInTx(
+  tx: Prisma.TransactionClient,
+  input: { orderId: string; customerId: string; actorId: string; reason: string },
+): Promise<OrderRefundTxOutcome> {
+  const demoUpdated = await tx.payment.updateMany({
+    where: { orderId: input.orderId, isDemo: true, status: 'SUCCEEDED' },
+    data: { status: 'REFUNDED' },
+  });
+  if (demoUpdated.count > 0) return { kind: 'demo' };
+
+  const paid = await tx.payment.findFirst({
+    where: { orderId: input.orderId, isDemo: false, status: 'SUCCEEDED' },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, provider: true, providerReference: true, amountMinor: true },
+  });
+  if (!paid) return { kind: 'none' };
+
+  if (paid.provider === 'wallet') {
+    const transitioned = await tx.payment.updateMany({
+      where: { id: paid.id, status: 'SUCCEEDED' },
+      data: { status: 'REFUNDED' },
+    });
+    if (transitioned.count !== 1) return { kind: 'none' };
+    const reference = `order_refund_${paid.id}`;
+    await creditWalletInTx(tx, {
+      userId: input.customerId,
+      amountMinor: paid.amountMinor,
+      reference,
+      type: 'REFUND',
+      orderId: input.orderId,
+      metadata: { reason: input.reason, paymentId: paid.id },
+    });
+    await tx.order.update({ where: { id: input.orderId }, data: { status: OrderStatus.REFUNDED } });
+    await tx.orderStatusEvent.create({
+      data: { orderId: input.orderId, status: OrderStatus.REFUNDED, actorId: input.actorId, note: 'Refunded to Smile wallet' },
+    });
+    return { kind: 'wallet', userId: input.customerId, amountMinor: paid.amountMinor, reference };
+  }
+
+  if (paid.provider === 'paystack' && paid.providerReference) {
+    const transitioned = await tx.payment.updateMany({
+      where: { id: paid.id, status: 'SUCCEEDED' },
+      data: { status: 'REFUND_PENDING' },
+    });
+    if (transitioned.count !== 1) return { kind: 'none' };
+    await tx.order.update({ where: { id: input.orderId }, data: { status: OrderStatus.REFUND_PENDING } });
+    await tx.orderStatusEvent.create({
+      data: { orderId: input.orderId, status: OrderStatus.REFUND_PENDING, actorId: input.actorId, note: 'Initiating Paystack refund' },
+    });
+    return {
+      kind: 'paystack',
+      paymentId: paid.id,
+      providerReference: paid.providerReference,
+      amountMinor: paid.amountMinor,
+    };
+  }
+
+  return { kind: 'none' };
+}
+
+async function initiatePaystackRefundForOrder(input: {
+  orderId: string;
+  paymentId: string;
+  providerReference: string;
+  amountMinor: number;
+  actorId: string;
+  reason: string;
+}) {
+  try {
+    const refund = await createPaystackRefund(
+      { transactionReference: input.providerReference, amountMinor: input.amountMinor, merchantNote: input.reason },
+      paystackSecret(),
+    );
+    if (refund.status === 'processed') {
+      const completed = await prisma.$transaction(async (tx) => {
+        const paymentChanged = await tx.payment.updateMany({
+          where: { id: input.paymentId, status: { in: ['SUCCEEDED', 'REFUND_PENDING'] } },
+          data: { status: 'REFUNDED' },
+        });
+        if (paymentChanged.count !== 1) return false;
+        const orderChanged = await tx.order.updateMany({
+          where: { id: input.orderId, status: { in: [OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.REFUND_PENDING] } },
+          data: { status: OrderStatus.REFUNDED },
+        });
+        if (orderChanged.count === 1) {
+          await tx.orderStatusEvent.create({
+            data: { orderId: input.orderId, status: OrderStatus.REFUNDED, actorId: input.actorId, note: 'Paystack refund processed' },
+          });
+        }
+        return orderChanged.count === 1;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      if (completed) emitOrderStatusNotification(input.orderId, OrderStatus.REFUNDED);
+      return { status: 'processed' as const, refundId: refund.id };
+    }
+    return { status: refund.status, refundId: refund.id };
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'paystack_refund_init_failed',
+      orderId: input.orderId,
+      paymentId: input.paymentId,
+      errorType: error instanceof Error ? error.name : 'unknown',
+      message: (error instanceof Error ? error.message : 'Unknown error').slice(0, 180),
+    }));
+    return { status: 'pending_retry' as const, refundId: null };
+  }
+}
+
+async function settlePaystackRefundFromWebhook(
+  transactionReference: string,
+  outcome: 'processed' | 'failed' | 'pending',
+  note?: string,
+) {
+  const payment = await prisma.payment.findUnique({
+    where: { providerReference: transactionReference },
+    select: { id: true, orderId: true, provider: true, status: true },
+  });
+  if (!payment || payment.provider !== 'paystack') return;
+
+  if (outcome === 'processed') {
+    const refunded = await prisma.$transaction(async (tx) => {
+      const changed = await tx.payment.updateMany({
+        where: { id: payment.id, status: { in: ['SUCCEEDED', 'REFUND_PENDING'] } },
+        data: { status: 'REFUNDED' },
+      });
+      if (!changed.count) return false;
+      const orderChanged = await tx.order.updateMany({
+        where: { id: payment.orderId, status: { in: [OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.REFUND_PENDING] } },
+        data: { status: OrderStatus.REFUNDED },
+      });
+      if (orderChanged.count) {
+        await tx.orderStatusEvent.create({
+          data: { orderId: payment.orderId, status: OrderStatus.REFUNDED, actorId: 'paystack-webhook', note: note ?? 'Paystack refund confirmed' },
+        });
+      }
+      return orderChanged.count > 0;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (refunded) emitOrderStatusNotification(payment.orderId, OrderStatus.REFUNDED);
+    return;
+  }
+
+  if (outcome === 'failed') {
+    console.warn(JSON.stringify({ event: 'paystack_refund_failed', orderId: payment.orderId, paymentId: payment.id, note: note ?? 'refund.failed' }));
+    await prisma.orderStatusEvent.create({
+      data: {
+        orderId: payment.orderId,
+        status: OrderStatus.REFUND_PENDING,
+        actorId: 'paystack-webhook',
+        note: note ?? 'Paystack refund failed; finance review required.',
+      },
+    }).catch(() => undefined);
+  }
 }
 async function requireUser(req:AuthRequest,res:express.Response,next:express.NextFunction) {
   const header = req.header('authorization');
@@ -534,14 +783,33 @@ app.delete('/api/v1/auth/account',requireUser,async(req:AuthRequest,res,next)=>{
     const user=await prisma.user.findUnique({where:{id:req.auth!.userId},select:{id:true,passwordHash:true,roles:true}});
     if(!user)return res.status(404).json({error:{code:'ACCOUNT_NOT_FOUND',message:'Account not found.'}});
     if(!await verifyPassword(input.data.password,user.passwordHash))return res.status(400).json({error:{code:'CURRENT_PASSWORD_INCORRECT',message:'Your password is incorrect.'}});
-    if(user.roles.includes(Role.VENDOR)||user.roles.includes(Role.RIDER))return res.status(409).json({error:{code:'BUSINESS_ACCOUNT',message:'Contact Smile support to close an account with vendor or rider access.'}});
+    const [activeVendorOrders,activeRiderDeliveries,pendingWithdrawals]=await Promise.all([
+      prisma.order.count({where:{vendor:{is:{ownerId:user.id}},status:{in:[OrderStatus.CONFIRMED,OrderStatus.ACCEPTED_BY_VENDOR,OrderStatus.PREPARING,OrderStatus.READY_FOR_PICKUP,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP]}}}),
+      prisma.delivery.count({where:{assignedRider:{is:{userId:user.id}},status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}),
+      prisma.walletTransaction.count({where:{userId:user.id,type:'WITHDRAWAL',status:'PENDING'}}),
+    ]);
+    const blocked=accountDeletionPrecheckError({isAdmin:user.roles.some(isAdminRole),activeVendorOrders,activeRiderDeliveries,pendingWithdrawals});
+    if(blocked)return res.status(blocked.status).json({error:{code:blocked.code,message:blocked.message}});
     const replacementPassword=await makePasswordHash(randomBytes(32).toString('hex'));
     const now=new Date();
-    await prisma.$transaction([
-      prisma.address.updateMany({where:{userId:user.id},data:{label:'Removed',line1:'Removed',city:'Removed',latitude:null,longitude:null,geocodedAt:null}}),
-      prisma.user.update({where:{id:user.id},data:{name:'Deleted account',email:null,phone:null,passwordHash:replacementPassword}}),
-      prisma.session.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:now}})
-    ]);
+    await prisma.$transaction(async tx=>{
+      await tx.address.updateMany({where:{userId:user.id},data:{label:'Removed',line1:'Removed',city:'Removed',latitude:null,longitude:null,geocodedAt:null}});
+      await tx.pushDevice.deleteMany({where:{userId:user.id}});
+      const vendor=await tx.vendor.findUnique({where:{ownerId:user.id},select:{id:true}});
+      if(vendor){
+        await tx.product.updateMany({where:{vendorId:vendor.id},data:{available:false}});
+        await tx.vendor.update({where:{id:vendor.id},data:{name:'Closed store',description:'',address:'Removed',contactPhone:null,logoUrl:null,coverImageUrl:null,cacNumber:null,cacDocumentUrl:null,latitude:null,longitude:null,geocodedAt:null,isOpen:false,status:VendorStatus.SUSPENDED}});
+      }
+      const rider=await tx.riderProfile.findUnique({where:{userId:user.id},select:{id:true}});
+      if(rider){
+        await tx.riderLocation.deleteMany({where:{riderId:rider.id}});
+        await tx.riderOffer.updateMany({where:{riderId:rider.id,status:RiderOfferStatus.PENDING},data:{status:RiderOfferStatus.EXPIRED}});
+        await tx.riderProfile.update({where:{id:rider.id},data:{status:VendorStatus.SUSPENDED,available:false,dateOfBirth:null,ninCiphertext:null,ninDocumentPublicId:null,ninDocumentVersion:null,profileImageUrl:null,plateNumber:null,residentialAddress:null,guarantorName:null,guarantorNinCiphertext:null,guarantorAddress:null,serviceArea:''}});
+      }
+      await tx.wallet.updateMany({where:{userId:user.id},data:{status:'CLOSED',payoutAccountLast4:null,payoutAccountName:null,payoutBankName:null,payoutBankCode:null,payoutRecipientCode:null,payoutStatus:'NOT_SET'}});
+      await tx.user.update({where:{id:user.id},data:{name:'Deleted account',email:null,phone:null,phoneVerifiedAt:null,passwordHash:replacementPassword,roles:[]}});
+      await tx.session.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:now}});
+    });
     return res.status(204).end();
   }catch(error){return next(error);}
 });
@@ -688,7 +956,20 @@ app.get('/api/v1/rider/profile',requireUser,requireRole(Role.RIDER),async(req:Au
 });
 app.put('/api/v1/rider/availability',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   const input=z.object({available:z.boolean()}).safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_AVAILABILITY',message:'Availability must be true or false.'}});
-  try{const profile=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!profile||profile.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Only an approved, active rider can change availability.'}});if(input.data.available&&await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER)return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot receive more delivery offers today.'}});if(input.data.available){const location=await prisma.riderLocation.findUnique({where:{riderId:profile.id}});if(!location||location.updatedAt<new Date(Date.now()-10*60_000))return res.status(409).json({error:{code:'LOCATION_REQUIRED',message:'Send a recent location before going online.'}});}const data=await prisma.riderProfile.update({where:{id:profile.id},data:{available:input.data.available}});if(data.available)await dispatchWaitingDeliveries();return res.json({data:{available:data.available}});}catch(error){return next(error);}
+  try{
+    const profile=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});
+    if(!profile||profile.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Only an approved, active rider can change availability.'}});
+    if(input.data.available){
+      const activeDelivery=await prisma.delivery.findFirst({where:{assignedRiderId:profile.id,status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}},select:{id:true}});
+      if(activeDelivery)return res.status(409).json({error:{code:'ACTIVE_DELIVERY_IN_PROGRESS',message:'Complete your active delivery before going online for new offers.'}});
+      if(await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER)return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot receive more delivery offers today.'}});
+      const location=await prisma.riderLocation.findUnique({where:{riderId:profile.id}});
+      if(!location||location.updatedAt<new Date(Date.now()-10*60_000))return res.status(409).json({error:{code:'LOCATION_REQUIRED',message:'Send a recent location before going online.'}});
+    }
+    const data=await prisma.riderProfile.update({where:{id:profile.id},data:{available:input.data.available}});
+    if(data.available)await dispatchWaitingDeliveries();
+    return res.json({data:{available:data.available}});
+  }catch(error){return next(error);}
 });
 app.put('/api/v1/rider/location',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   const input=z.object({latitude:z.number().min(-90).max(90),longitude:z.number().min(-180).max(180)}).safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_LOCATION',message:'Location coordinates are invalid.'}});
@@ -714,11 +995,12 @@ app.get('/api/v1/rider/offers',requireUser,requireRole(Role.RIDER),async(req:Aut
     if(!rider||rider.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'An approved, active rider profile is required.'}});
     if(await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER){await prisma.riderProfile.update({where:{id:rider.id},data:{available:false}});return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot receive more delivery offers until tomorrow.'}});}
     const offers=await prisma.riderOffer.findMany({where:{riderId:rider.id,status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}},include:{delivery:{include:{order:{include:{vendor:true,address:{select:{city:true}},items:true}}}}},orderBy:{createdAt:'asc'},take:20});
-    const data=offers.map(offer=>{const order=offer.delivery.order;const pickup=order.vendor.latitude!==null&&order.vendor.longitude!==null&&rider.location?distanceKm(Number(rider.location.latitude),Number(rider.location.longitude),Number(order.vendor.latitude),Number(order.vendor.longitude)):null;const pickupDistanceKm=offer.pickupDistanceMeters===null?pickup:Number(offer.pickupDistanceMeters/1000);return{id:offer.id,expiresAt:offer.expiresAt,deliveryId:offer.deliveryId,pickupDistanceKm:pickupDistanceKm===null?null:Number(pickupDistanceKm.toFixed(1)),vendor:{name:order.vendor.name,address:order.vendor.address},dropoffCity:order.address?.city??'Delivery area',itemCount:order.items.reduce((count,item)=>count+item.quantity,0),totalMinor:order.totalMinor};});
+    const data=offers.map(offer=>{const order=offer.delivery.order;const pickup=order.vendor.latitude!==null&&order.vendor.longitude!==null&&rider.location?distanceKm(Number(rider.location.latitude),Number(rider.location.longitude),Number(order.vendor.latitude),Number(order.vendor.longitude)):null;const pickupDistanceKm=offer.pickupDistanceMeters===null?pickup:Number(offer.pickupDistanceMeters/1000);return{id:offer.id,expiresAt:offer.expiresAt,deliveryId:offer.deliveryId,pickupDistanceKm:pickupDistanceKm===null?null:Number(pickupDistanceKm.toFixed(1)),deliveryFeeMinor:order.deliveryFeeMinor,deliveryDistanceMeters:order.deliveryDistanceMeters,vendor:{name:order.vendor.name,address:order.vendor.address},dropoffCity:order.address?.city??'Delivery area',itemCount:order.items.reduce((count,item)=>count+item.quantity,0),totalMinor:order.totalMinor};});
     return res.json({data});
   }catch(error){return next(error);}
 });
 app.post('/api/v1/rider/offers/:offerId/accept',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
+  if(!deliveryProofSecret())return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Set DELIVERY_OTP_SECRET before assigning deliveries to riders.'}});
   try{
     if(await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER)return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot accept delivery offers today.'}});
     const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider||rider.status!==VendorStatus.APPROVED||!rider.available)return res.status(403).json({error:{code:'RIDER_UNAVAILABLE',message:'An approved, available rider is required to accept an offer.'}});
@@ -735,7 +1017,10 @@ app.post('/api/v1/rider/offers/:offerId/accept',requireUser,requireRole(Role.RID
       await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
       return tx.delivery.findUnique({where:{id:offer.deliveryId},include:{order:{select:{id:true,status:true}},assignedRider:{include:{user:{select:{name:true}}}}}});
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
-    if(delivery)emitOrderStatusNotification(delivery.order.id,OrderStatus.RIDER_ASSIGNED);
+    if(delivery){
+      emitOrderStatusNotification(delivery.order.id,OrderStatus.RIDER_ASSIGNED);
+      return res.json({data:{...delivery,pickupCode:vendorPickupOtp(delivery.id,rider.id)}});
+    }
     return res.json({data:delivery});
   }catch(error){if(error instanceof Error&&['OFFER_ALREADY_ASSIGNED','OFFER_EXPIRED','ORDER_STATE_CONFLICT'].includes(error.message))return res.status(409).json({error:{code:error.message,message:'The offer is no longer available. Refresh your offers.'}});if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2034')return res.status(409).json({error:{code:'OFFER_ALREADY_ASSIGNED',message:'Another rider accepted this delivery first.'}});return next(error);}
 });
@@ -749,7 +1034,7 @@ app.post('/api/v1/rider/offers/:offerId/reject',requireUser,requireRole(Role.RID
   }catch(error){return next(error);}
 });
 app.get('/api/v1/rider/deliveries',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
-  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider||rider.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'An approved rider profile is required.'}});const rows=await prisma.delivery.findMany({where:{assignedRiderId:rider.id},orderBy:{createdAt:'desc'},take:50,include:{order:{select:{id:true,status:true,totalMinor:true,deliveryNotes:true,vendor:{select:{id:true,name:true,address:true,latitude:true,longitude:true}},customer:{select:{name:true,phone:true}},address:{select:{label:true,line1:true,city:true,latitude:true,longitude:true}},items:{select:{id:true,nameSnapshot:true,quantity:true,unitPriceMinor:true,addons:true}}}}}});const data=rows.map(({order,...delivery})=>({...delivery,pickupCode:delivery.status===DeliveryStatus.ASSIGNED?vendorPickupOtp(delivery.id):null,order:{...order,customer:delivery.status===DeliveryStatus.PICKED_UP?order.customer:null}}));return res.json({data});}catch(error){return next(error);}
+  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider||rider.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'An approved rider profile is required.'}});const rows=await prisma.delivery.findMany({where:{assignedRiderId:rider.id},orderBy:{createdAt:'desc'},take:50,include:{order:{select:{id:true,displayNumber:true,status:true,subtotalMinor:true,deliveryFeeMinor:true,serviceFeeMinor:true,deliveryDistanceMeters:true,totalMinor:true,deliveryNotes:true,vendor:{select:{id:true,name:true,address:true,latitude:true,longitude:true}},customer:{select:{name:true,phone:true}},address:{select:{label:true,line1:true,city:true,latitude:true,longitude:true}},items:{select:{id:true,nameSnapshot:true,quantity:true,unitPriceMinor:true,addons:true}}}}}});const hasProofSecret=Boolean(deliveryProofSecret());const data=rows.map(({order,...delivery})=>({...delivery,pickupCode:hasProofSecret&&delivery.status===DeliveryStatus.ASSIGNED&&delivery.assignedRiderId?vendorPickupOtp(delivery.id,delivery.assignedRiderId):null,order:{...order,customer:delivery.status===DeliveryStatus.PICKED_UP?order.customer:null}}));return res.json({data});}catch(error){return next(error);}
 });
 app.get('/api/v1/rider/deliveries/:deliveryId/route',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   try{
@@ -774,7 +1059,7 @@ app.get('/api/v1/rider/deliveries/:deliveryId/route',requireUser,requireRole(Rol
 });
 app.post('/api/v1/rider/deliveries/:deliveryId/complete',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   const input=z.object({code:z.string().regex(/^\d{6}$/)}).safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_DELIVERY_CODE',message:'Enter the 6 digit code from the customer.'}});
-  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});const expected=Buffer.from(deliveryOtp(delivery.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});}await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,isDemo:true,vendor:{select:{ownerId:true}}}});if(!order.isDemo&&order.subtotalMinor>0){const wallet=await tx.wallet.upsert({where:{userId:order.vendor.ownerId},update:{},create:{userId:order.vendor.ownerId,dvaStatus:'PENDING'}});const reference=`vendor_sale_${order.id}`;const existing=await tx.walletTransaction.findUnique({where:{reference},select:{id:true}});if(!existing){const updated=await tx.wallet.update({where:{id:wallet.id},data:{balanceMinor:{increment:order.subtotalMinor}}});await tx.walletTransaction.create({data:{walletId:wallet.id,userId:order.vendor.ownerId,type:'ORDER_EARNING',direction:'CREDIT',status:'SUCCEEDED',amountMinor:order.subtotalMinor,balanceAfter:updated.balanceMinor,reference,orderId:order.id,metadata:{basis:'delivered_item_subtotal'}}});}}await tx.riderProfile.update({where:{id:rider.id},data:{available:true}});});emitOrderStatusNotification(delivery.orderId,OrderStatus.DELIVERED);return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});}catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});return next(error);}
+  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});const expected=Buffer.from(deliveryOtp(delivery.id,rider.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});}await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,deliveryFeeMinor:true,deliveryDistanceMeters:true,isDemo:true,vendor:{select:{ownerId:true}}}});if(!order.isDemo){if(order.subtotalMinor>0)await creditWalletInTx(tx,{userId:order.vendor.ownerId,amountMinor:order.subtotalMinor,reference:`vendor_sale_${order.id}`,type:'ORDER_EARNING',orderId:order.id,metadata:{basis:'delivered_item_subtotal'}});if(order.deliveryFeeMinor>0)await creditWalletInTx(tx,{userId:rider.userId,amountMinor:order.deliveryFeeMinor,reference:`rider_delivery_${order.id}`,type:'DELIVERY_EARNING',orderId:order.id,metadata:{basis:'delivered_delivery_fee',distanceMeters:order.deliveryDistanceMeters}});}await tx.riderProfile.update({where:{id:rider.id},data:{available:true}});},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});emitOrderStatusNotification(delivery.orderId,OrderStatus.DELIVERED);return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});}catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});return next(error);}
 });
 
 app.get('/api/v1/notifications',requireUser,async(req:AuthRequest,res,next)=>{
@@ -865,7 +1150,12 @@ app.post('/api/v1/admin/notifications',requireUser,requireAdminPermission('notif
 });
 
 app.get('/api/v1/vendors',optionalUser,async (req:AuthRequest,res,next) => {
-  const input = z.object({q:z.string().trim().max(100).optional(),category:z.string().trim().max(60).optional()}).safeParse(req.query);
+  const input = z.object({
+    q:z.string().trim().max(100).optional(),
+    category:z.string().trim().max(60).optional(),
+    latitude:z.coerce.number().min(-90).max(90).optional(),
+    longitude:z.coerce.number().min(-180).max(180).optional(),
+  }).safeParse(req.query);
   if(!input.success) return res.status(400).json({error:{code:'INVALID_QUERY',message:'Search query is invalid.'}});
   try {
     const buildWhere=(isDemo:boolean):Prisma.VendorWhereInput=>{
@@ -878,7 +1168,14 @@ app.get('/api/v1/vendors',optionalUser,async (req:AuthRequest,res,next) => {
     const select={id:true,name:true,address:true,logoUrl:true,coverImageUrl:true,isOpen:true,isDemo:true,latitude:true,longitude:true,products:{where:{available:true},select:{category:true,imageUrl:true},take:1}} as const;
     const source = catalogSource(req.auth?.demoAccess===true);
     const rows = source==='database'?await prisma.vendor.findMany({where:buildWhere(false),orderBy:{name:'asc'},take:50,select}):await prisma.vendor.findMany({where:buildWhere(true),orderBy:{name:'asc'},take:50,select});
-    const data = rows.map(v=>({id:v.id,name:v.name,cuisine:v.products[0]?.category??'Local store',neighborhood:v.address,eta:'Estimate at checkout',fee:800,rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:v.latitude===null?null:Number(v.latitude),longitude:v.longitude===null?null:Number(v.longitude)}));
+    const hasOrigin=input.data.latitude!==undefined&&input.data.longitude!==undefined;
+    const data = rows.map(v=>{
+      const vLat=v.latitude===null?null:Number(v.latitude);
+      const vLng=v.longitude===null?null:Number(v.longitude);
+      const estimatedMeters=hasOrigin&&vLat!==null&&vLng!==null?Math.round(distanceKm(input.data.latitude!,input.data.longitude!,vLat,vLng)*1000):null;
+      const feeMinor=estimatedMeters===null?BASE_DELIVERY_FEE_MINOR:calculateDeliveryFeeMinor(estimatedMeters);
+      return {id:v.id,name:v.name,cuisine:v.products[0]?.category??'Local store',neighborhood:v.address,eta:'Estimate at checkout',fee:Math.round(feeMinor/100),rating:null,image:v.coverImageUrl??v.logoUrl??v.products[0]?.imageUrl??'',open:v.isOpen,demo:v.isDemo,latitude:vLat,longitude:vLng};
+    });
     return res.json({data,meta:{source,total:data.length}});
   } catch(error) { return next(error); }
 });
@@ -893,7 +1190,53 @@ app.get('/api/v1/vendors/:vendorId/products',optionalUser,async (req:AuthRequest
   } catch(error) { return next(error); }
 });
 
-const createOrderSchema = z.object({vendorId:z.string().min(1),addressId:z.string().min(1),deliveryNotes:z.string().max(500).optional(),idempotencyKey:z.string().uuid(),items:z.array(z.object({productId:z.string().min(1),quantity:z.number().int().min(1).max(20),addons:z.array(z.object({addonId:z.string().min(1),quantity:z.number().int().min(1).max(20)})).max(20).optional()})).min(1).max(30)}).refine(v=>new Set(v.items.map(x=>x.productId)).size===v.items.length,{message:'Each product may appear only once.'}).refine(v=>v.items.every(item=>new Set((item.addons??[]).map(addon=>addon.addonId)).size===(item.addons??[]).length),{message:'Each product extra may appear only once per item.'});
+const orderItemsSchema = z.array(z.object({productId:z.string().min(1),quantity:z.number().int().min(1).max(20),addons:z.array(z.object({addonId:z.string().min(1),quantity:z.number().int().min(1).max(20)})).max(20).optional()})).min(1).max(30);
+const quoteOrderSchema = z.object({vendorId:z.string().min(1),addressId:z.string().min(1),items:orderItemsSchema}).refine(v=>new Set(v.items.map(x=>x.productId)).size===v.items.length,{message:'Each product may appear only once.'}).refine(v=>v.items.every(item=>new Set((item.addons??[]).map(addon=>addon.addonId)).size===(item.addons??[]).length),{message:'Each product extra may appear only once per item.'});
+const createOrderSchema = z.object({vendorId:z.string().min(1),addressId:z.string().min(1),deliveryNotes:z.string().max(500).optional(),idempotencyKey:z.string().uuid(),items:orderItemsSchema}).refine(v=>new Set(v.items.map(x=>x.productId)).size===v.items.length,{message:'Each product may appear only once.'}).refine(v=>v.items.every(item=>new Set((item.addons??[]).map(addon=>addon.addonId)).size===(item.addons??[]).length),{message:'Each product extra may appear only once per item.'});
+
+async function prepareOrderQuote(userId:string,demoAccess:boolean,input:{vendorId:string;addressId:string;items:z.infer<typeof orderItemsSchema>}) {
+  const [vendor,address] = await Promise.all([
+    prisma.vendor.findFirst({where:{id:input.vendorId,status:VendorStatus.APPROVED,isOpen:true}}),
+    prisma.address.findFirst({where:{id:input.addressId,userId}})
+  ]);
+  if(!vendor) throw Object.assign(new Error('This kitchen cannot accept orders right now.'),{status:409,code:'VENDOR_UNAVAILABLE'});
+  if(vendor.isDemo&&!demoAccess) throw Object.assign(new Error('This kitchen cannot accept orders right now.'),{status:404,code:'VENDOR_UNAVAILABLE'});
+  if(await cancellationCount(vendor.ownerId)>=cancellationLimits.VENDOR) throw Object.assign(new Error('This vendor has reached today’s cancellation limit and cannot accept new orders today.'),{status:409,code:'VENDOR_DAILY_CANCELLATION_LIMIT'});
+  if(!address) throw Object.assign(new Error('Choose one of your saved delivery addresses.'),{status:400,code:'INVALID_ADDRESS'});
+  const ids = input.items.map(item=>item.productId);
+  const products = await prisma.product.findMany({where:{id:{in:ids},vendorId:vendor.id,available:true,isDemo:vendor.isDemo}});
+  if(products.length !== ids.length) throw Object.assign(new Error('A selected item is no longer available.'),{status:409,code:'ITEM_UNAVAILABLE'});
+  for(const item of input.items) {
+    const product = products.find(p=>p.id===item.productId)!;
+    if(product.stock !== null && product.stock < item.quantity) throw Object.assign(new Error(`${product.name} does not have enough stock.`),{status:409,code:'OUT_OF_STOCK'});
+  }
+  const addonIds=input.items.flatMap(item=>(item.addons??[]).map(addon=>addon.addonId));
+  const addons=addonIds.length?await prisma.productAddon.findMany({where:{id:{in:addonIds},available:true,productId:{in:ids}}}):[];
+  for(const item of input.items)for(const choice of item.addons??[])if(!addons.some(addon=>addon.id===choice.addonId&&addon.productId===item.productId))throw Object.assign(new Error('A selected extra is no longer available for this item.'),{status:409,code:'ADDON_UNAVAILABLE'});
+  const deliveryDistanceMeters=await estimateRouteDistanceMeters(vendor,address);
+  const deliveryFeeMinor=deliveryDistanceMeters===null?MIN_DELIVERY_FEE_MINOR:calculateDeliveryFeeMinor(deliveryDistanceMeters);
+  let amounts:{subtotalMinor:number;deliveryFeeMinor:number;serviceFeeMinor:number;totalMinor:number};
+  try {
+    amounts=calculateOrderAmounts(input.items.map(item=>({priceMinor:products.find(p=>p.id===item.productId)!.priceMinor,quantity:item.quantity,addons:(item.addons??[]).map(choice=>({priceMinor:addons.find(addon=>addon.id===choice.addonId)!.priceMinor,quantity:choice.quantity}))})),deliveryFeeMinor,SERVICE_FEE_MINOR);
+  } catch {
+    throw Object.assign(new Error('Order total is outside the supported range.'),{status:400,code:'ORDER_TOTAL_INVALID'});
+  }
+  return {vendor,address,products,addons,deliveryDistanceMeters,...amounts};
+}
+
+app.post('/api/v1/orders/quote',requireUser,requireRole(Role.CUSTOMER),async (req:AuthRequest,res,next)=>{
+  const input=quoteOrderSchema.safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_ORDER',message:'Review the items and delivery details.'}});
+  try{
+    const quote=await prepareOrderQuote(req.auth!.userId,req.auth?.demoAccess===true,input.data);
+    return res.json({data:{subtotalMinor:quote.subtotalMinor,deliveryFeeMinor:quote.deliveryFeeMinor,serviceFeeMinor:quote.serviceFeeMinor,totalMinor:quote.totalMinor,deliveryDistanceMeters:quote.deliveryDistanceMeters}});
+  }catch(error){
+    const failure=error as Error&{status?:number;code?:string};
+    if(failure.status)return res.status(failure.status).json({error:{code:failure.code??'ORDER_QUOTE_FAILED',message:failure.message}});
+    return next(error);
+  }
+});
+
 app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:AuthRequest,res,next) => {
   const input = createOrderSchema.safeParse(req.body);
   if(!input.success) return res.status(400).json({error:{code:'INVALID_ORDER',message:'Review the items and delivery details.'}});
@@ -901,29 +1244,7 @@ app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:Auth
     if(await cancellationCount(req.auth!.userId)>=cancellationLimits.CUSTOMER)return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot place another order today.'}});
     const prior = await prisma.order.findUnique({where:{idempotencyKey:input.data.idempotencyKey},include:{items:true}});
     if(prior) return prior.customerId === req.auth!.userId ? res.json({data:prior,replayed:true}) : res.status(409).json({error:{code:'IDEMPOTENCY_CONFLICT',message:'This request key is already in use.'}});
-    const [vendor,address] = await Promise.all([
-      prisma.vendor.findFirst({where:{id:input.data.vendorId,status:VendorStatus.APPROVED,isOpen:true}}),
-      prisma.address.findFirst({where:{id:input.data.addressId,userId:req.auth!.userId}})
-    ]);
-    if(!vendor) return res.status(409).json({error:{code:'VENDOR_UNAVAILABLE',message:'This kitchen cannot accept orders right now.'}});
-    if(vendor.isDemo&&!req.auth?.demoAccess)return res.status(404).json({error:{code:'VENDOR_UNAVAILABLE',message:'This kitchen cannot accept orders right now.'}});
-    const vendorOwner=await prisma.vendor.findUnique({where:{id:vendor.id},select:{ownerId:true}});if(vendorOwner&&await cancellationCount(vendorOwner.ownerId)>=cancellationLimits.VENDOR)return res.status(409).json({error:{code:'VENDOR_DAILY_CANCELLATION_LIMIT',message:'This vendor has reached today’s cancellation limit and cannot accept new orders today.'}});
-    if(!address) return res.status(400).json({error:{code:'INVALID_ADDRESS',message:'Choose one of your saved delivery addresses.'}});
-    const ids = input.data.items.map(item=>item.productId);
-    const products = await prisma.product.findMany({where:{id:{in:ids},vendorId:vendor.id,available:true,isDemo:vendor.isDemo}});
-    if(products.length !== ids.length) return res.status(409).json({error:{code:'ITEM_UNAVAILABLE',message:'A selected item is no longer available.'}});
-    for(const item of input.data.items) {
-      const product = products.find(p=>p.id===item.productId)!;
-      if(product.stock !== null && product.stock < item.quantity) return res.status(409).json({error:{code:'OUT_OF_STOCK',message:`${product.name} does not have enough stock.`}});
-    }
-    const addonIds=input.data.items.flatMap(item=>(item.addons??[]).map(addon=>addon.addonId));
-    const addons=addonIds.length?await prisma.productAddon.findMany({where:{id:{in:addonIds},available:true,productId:{in:ids}}}):[];
-    for(const item of input.data.items)for(const choice of item.addons??[])if(!addons.some(addon=>addon.id===choice.addonId&&addon.productId===item.productId))return res.status(409).json({error:{code:'ADDON_UNAVAILABLE',message:'A selected extra is no longer available for this item.'}});
-    const deliveryFeeMinor = 80000;
-    let amounts:{subtotalMinor:number;totalMinor:number};
-    try { amounts=calculateOrderAmounts(input.data.items.map(item=>({priceMinor:products.find(p=>p.id===item.productId)!.priceMinor,quantity:item.quantity,addons:(item.addons??[]).map(choice=>({priceMinor:addons.find(addon=>addon.id===choice.addonId)!.priceMinor,quantity:choice.quantity}))})),deliveryFeeMinor); }
-    catch { return res.status(400).json({error:{code:'ORDER_TOTAL_INVALID',message:'Order total is outside the supported range.'}}); }
-    const {subtotalMinor,totalMinor}=amounts;
+    const {vendor,address,products,addons,subtotalMinor,deliveryFeeMinor,serviceFeeMinor,deliveryDistanceMeters,totalMinor} = await prepareOrderQuote(req.auth!.userId,req.auth?.demoAccess===true,input.data);
     const mockPayment = shouldUseMockCheckout(vendor.isDemo,req.auth?.demoAccess===true);
     const order = await prisma.$transaction(async tx=>{
       for(const item of input.data.items) {
@@ -933,13 +1254,15 @@ app.post('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:Auth
           if(changed.count !== 1) throw new Error('STOCK_CONFLICT');
         }
       }
-      const created = await tx.order.create({data:{customerId:req.auth!.userId,vendorId:vendor.id,addressId:address.id,deliveryNotes:input.data.deliveryNotes,subtotalMinor,deliveryFeeMinor,totalMinor,idempotencyKey:input.data.idempotencyKey,isDemo:mockPayment,status:mockPayment?OrderStatus.CONFIRMED:OrderStatus.PENDING_PAYMENT,items:{create:input.data.items.map(item=>{const p=products.find(row=>row.id===item.productId)!;return {productId:p.id,nameSnapshot:p.name,unitPriceMinor:p.priceMinor,quantity:item.quantity,addons:{create:(item.addons??[]).map(choice=>{const addon=addons.find(row=>row.id===choice.addonId)!;return{nameSnapshot:addon.name,unitPriceMinor:addon.priceMinor,quantity:choice.quantity};})}};})},events:{create:{status:mockPayment?OrderStatus.CONFIRMED:OrderStatus.PENDING_PAYMENT,actorId:req.auth!.userId,note:mockPayment?'Development mock checkout':'Awaiting payment'}}},include:{items:{include:{addons:true}}}});
+      const created = await tx.order.create({data:{customerId:req.auth!.userId,vendorId:vendor.id,addressId:address.id,deliveryNotes:input.data.deliveryNotes,subtotalMinor,deliveryFeeMinor,serviceFeeMinor,deliveryDistanceMeters,totalMinor,idempotencyKey:input.data.idempotencyKey,isDemo:mockPayment,status:mockPayment?OrderStatus.CONFIRMED:OrderStatus.PENDING_PAYMENT,items:{create:input.data.items.map(item=>{const p=products.find(row=>row.id===item.productId)!;return {productId:p.id,nameSnapshot:p.name,unitPriceMinor:p.priceMinor,quantity:item.quantity,addons:{create:(item.addons??[]).map(choice=>{const addon=addons.find(row=>row.id===choice.addonId)!;return{nameSnapshot:addon.name,unitPriceMinor:addon.priceMinor,quantity:choice.quantity};})}};})},events:{create:{status:mockPayment?OrderStatus.CONFIRMED:OrderStatus.PENDING_PAYMENT,actorId:req.auth!.userId,note:mockPayment?'Development mock checkout':'Awaiting payment'}}},include:{items:{include:{addons:true}}}});
       if(mockPayment)await tx.payment.create({data:{orderId:created.id,amountMinor:created.totalMinor,status:'SUCCEEDED',provider:'development-mock',providerReference:`demo_${created.id}`,isDemo:true}});
       return created;
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     emitOrderStatusNotification(order.id,order.status);
     return res.status(201).json({data:order,paymentMode:mockPayment?'development-mock':'payment-required'});
   } catch(error) {
+    const failure=error as Error&{status?:number;code?:string};
+    if(failure.status)return res.status(failure.status).json({error:{code:failure.code??'ORDER_FAILED',message:failure.message}});
     if(error instanceof Error && error.message === 'STOCK_CONFLICT') return res.status(409).json({error:{code:'OUT_OF_STOCK',message:'Stock changed while placing this order. Refresh and try again.'}});
     if(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const existing = await prisma.order.findUnique({where:{idempotencyKey:input.data.idempotencyKey},include:{items:true}});
@@ -957,7 +1280,7 @@ app.post('/api/v1/orders/:orderId/pay',requireUser,requireRole(Role.CUSTOMER),as
     const order=await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),customerId:req.auth!.userId},select:{id:true,status:true,totalMinor:true,isDemo:true,customer:{select:{email:true}}}});
     if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Order not found.'}});
     if(order.status===OrderStatus.CONFIRMED)return res.json({data:{orderId:order.id,status:order.status,replayed:true}});
-    if(order.status!==OrderStatus.PENDING_PAYMENT)return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
+    if(!shouldAllowOrderPayment(order.status))return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
     if(input.data.method==='wallet'){
       const result=await debitWalletForOrder(req.auth!.userId,order.id,order.totalMinor);
       if(!result.paid){
@@ -987,14 +1310,14 @@ app.post('/api/v1/orders/:orderId/pay/verify',requireUser,requireRole(Role.CUSTO
     const order=await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),customerId:req.auth!.userId},select:{id:true,status:true,totalMinor:true}});
     if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Order not found.'}});
     if(order.status===OrderStatus.CONFIRMED)return res.json({data:{orderId:order.id,status:order.status,confirmed:true}});
-    if(order.status!==OrderStatus.PENDING_PAYMENT)return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
+    if(!shouldAllowOrderPayment(order.status))return res.status(409).json({error:{code:'ORDER_NOT_PAYABLE',message:'This order can no longer be paid.'}});
     const payment=await prisma.payment.findUnique({where:{providerReference:input.data.reference},select:{id:true,orderId:true,amountMinor:true,provider:true}});
     if(!payment||payment.provider!=='paystack'||payment.orderId!==order.id||payment.amountMinor!==order.totalMinor)return res.status(404).json({error:{code:'PAYMENT_NOT_FOUND',message:'This Paystack payment does not belong to the order.'}});
     const verified=await verifyPaystackTransaction(input.data.reference,paystackSecret());
     if(verified.status!=='success')return res.status(202).json({data:{orderId:order.id,status:verified.status,confirmed:false}});
     if(verified.reference!==input.data.reference||verified.amountMinor!==order.totalMinor||verified.metadata.purpose!=='order_payment'||verified.metadata.orderId!==order.id||verified.metadata.userId!==req.auth!.userId)return res.status(409).json({error:{code:'PAYMENT_MISMATCH',message:'Paystack could not verify this payment for the order.'}});
     const confirmed=await prisma.$transaction(async tx=>{
-      const changed=await tx.order.updateMany({where:{id:order.id,customerId:req.auth!.userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
+      const changed=await tx.order.updateMany({where:{id:order.id,customerId:req.auth!.userId,status:{in:[OrderStatus.PENDING_PAYMENT,OrderStatus.PAYMENT_FAILED]}},data:{status:OrderStatus.CONFIRMED}});
       if(changed.count)await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.CONFIRMED,actorId:req.auth!.userId,note:'Paystack payment verified'}});
       else{
         const current=await tx.order.findUnique({where:{id:order.id},select:{status:true}});
@@ -1037,8 +1360,10 @@ app.post('/api/v1/wallet/topup/verify',requireUser,async(req:AuthRequest,res,nex
     const metadataAmount=typeof verified.metadata.amountMinor==='number'?verified.metadata.amountMinor:Number(verified.metadata.amountMinor);
     if(verified.metadata.purpose!=='wallet_topup'||verified.metadata.userId!==req.auth!.userId||!Number.isSafeInteger(metadataAmount)||metadataAmount!==verified.amountMinor)return res.status(404).json({error:{code:'TOPUP_NOT_FOUND',message:'This payment reference does not belong to your wallet.'}});
     const transactionReference=`paystack_${verified.reference}`;
-    try{await creditWallet({userId:req.auth!.userId,amountMinor:verified.amountMinor,reference:transactionReference,type:'TOPUP',metadata:{channel:verified.channel}});}
+    let credited=false;
+    try{const resCredit=await creditWallet({userId:req.auth!.userId,amountMinor:verified.amountMinor,reference:transactionReference,type:'TOPUP',metadata:{channel:verified.channel}});credited=resCredit.credited;}
     catch(error){if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')||!await prisma.walletTransaction.findUnique({where:{reference:transactionReference},select:{id:true}}))throw error;}
+    if(credited)emitWalletCreditNotification(req.auth!.userId,verified.amountMinor,transactionReference,'TOPUP');
     const wallet=await ensureWallet(req.auth!.userId);
     return res.json({data:{status:'success',credited:true,balanceMinor:wallet.balanceMinor}});
   }catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});return next(error);}
@@ -1083,40 +1408,75 @@ app.put('/api/v1/vendor/wallet/payout-account',requireUser,requireRole(Role.VEND
   }catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'PAYSTACK_UNAVAILABLE',message:error.message}});return next(error);}
 });
 
-app.post('/api/v1/vendor/wallet/withdraw',requireUser,requireRole(Role.VENDOR),async(req:AuthRequest,res,next)=>{
-  const input=z.object({amountMinor:z.number().int().min(10000).max(100_000_000),idempotencyKey:z.string().uuid()}).safeParse(req.body);
-  if(!input.success)return res.status(400).json({error:{code:'INVALID_WITHDRAWAL',message:'Enter a withdrawal amount from ₦100 and a valid request key.'}});
-  let requestReference:string|undefined;let reservationCreated=false;
+async function withdrawFromWallet(input:{userId:string;amountMinor:number;idempotencyKey:string;prefix:'swv'|'swd';reason:string;insufficientMessage:string}) {
+  const wallet=await ensureWallet(input.userId);
+  if(wallet.payoutStatus!=='VERIFIED'||!wallet.payoutRecipientCode)throw Object.assign(new Error('Add and verify a Nigerian bank account before withdrawing.'),{status:409,code:'PAYOUT_ACCOUNT_REQUIRED'});
+  const reference=`${input.prefix}_${createHash('sha256').update(`${input.userId}:${input.idempotencyKey}`).digest('hex').slice(0,40)}`;
+  let reservationCreated=false;
   try{
-    const vendor=await prisma.vendor.findFirst({where:{ownerId:req.auth!.userId,status:VendorStatus.APPROVED},select:{id:true}});
-    if(!vendor)return res.status(403).json({error:{code:'VENDOR_NOT_APPROVED',message:'An approved vendor account is required.'}});
-    const wallet=await ensureWallet(req.auth!.userId);
-    if(wallet.payoutStatus!=='VERIFIED'||!wallet.payoutRecipientCode)return res.status(409).json({error:{code:'PAYOUT_ACCOUNT_REQUIRED',message:'Add and verify a Nigerian bank account before withdrawing.'}});
-    const reference=`swv_${createHash('sha256').update(`${req.auth!.userId}:${input.data.idempotencyKey}`).digest('hex').slice(0,40)}`;
-    requestReference=reference;
     const reservation=await prisma.$transaction(async tx=>{
       const existing=await tx.walletTransaction.findUnique({where:{reference}});
       if(existing)return existing;
-      const debit=await tx.wallet.updateMany({where:{id:wallet.id,status:'ACTIVE',balanceMinor:{gte:input.data.amountMinor}},data:{balanceMinor:{decrement:input.data.amountMinor}}});
-      if(!debit.count)throw new Error('INSUFFICIENT_VENDOR_WALLET_BALANCE');
+      const debit=await tx.wallet.updateMany({where:{id:wallet.id,status:'ACTIVE',balanceMinor:{gte:input.amountMinor}},data:{balanceMinor:{decrement:input.amountMinor}}});
+      if(!debit.count)throw Object.assign(new Error(input.insufficientMessage),{status:409,code:'INSUFFICIENT_WALLET_BALANCE'});
       const updated=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id},select:{balanceMinor:true}});
-      return tx.walletTransaction.create({data:{walletId:wallet.id,userId:req.auth!.userId,type:'WITHDRAWAL',direction:'DEBIT',status:'PENDING',amountMinor:input.data.amountMinor,balanceAfter:updated.balanceMinor,reference,metadata:{recipientCode:wallet.payoutRecipientCode}}});
+      return tx.walletTransaction.create({data:{walletId:wallet.id,userId:input.userId,type:'WITHDRAWAL',direction:'DEBIT',status:'PENDING',amountMinor:input.amountMinor,balanceAfter:updated.balanceMinor,reference,metadata:{recipientCode:wallet.payoutRecipientCode}}});
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     reservationCreated=true;
-    if(reservation.status==='SUCCEEDED')return res.json({data:{status:'SUCCEEDED',reference,balanceMinor:(await prisma.wallet.findUniqueOrThrow({where:{id:wallet.id},select:{balanceMinor:true}})).balanceMinor}});
-    if(reservation.status!=='PENDING')return res.status(409).json({error:{code:'WITHDRAWAL_ALREADY_FINAL',message:'This withdrawal request has already been finalized. Start a new withdrawal if needed.'}});
+    if(reservation.status==='SUCCEEDED')return {httpStatus:200,data:{status:'SUCCEEDED',reference,balanceMinor:(await prisma.wallet.findUniqueOrThrow({where:{id:wallet.id},select:{balanceMinor:true}})).balanceMinor}};
+    if(reservation.status!=='PENDING')throw Object.assign(new Error('This withdrawal request has already been finalized. Start a new withdrawal if needed.'),{status:409,code:'WITHDRAWAL_ALREADY_FINAL'});
     const metadata=reservation.metadata;
     const recipientCode=metadata&&typeof metadata==='object'&&!Array.isArray(metadata)&&'recipientCode'in metadata&&typeof metadata.recipientCode==='string'?metadata.recipientCode:null;
-    if(!recipientCode)return res.status(409).json({error:{code:'WITHDRAWAL_RECIPIENT_MISSING',message:'The saved bank recipient for this withdrawal is unavailable.'}});
-    const transfer=await initiatePaystackTransfer({amountMinor:reservation.amountMinor,recipientCode,reference,reason:'Smile vendor wallet withdrawal'},paystackSecret());
+    if(!recipientCode)throw Object.assign(new Error('The saved bank recipient for this withdrawal is unavailable.'),{status:409,code:'WITHDRAWAL_RECIPIENT_MISSING'});
+    const transfer=await initiatePaystackTransfer({amountMinor:reservation.amountMinor,recipientCode,reference,reason:input.reason},paystackSecret());
     const status=transfer.status.toLowerCase()==='success'?'SUCCEEDED':'PENDING';
     const updated=await prisma.walletTransaction.update({where:{id:reservation.id},data:{status,metadata:{recipientCode,transferCode:transfer.transferCode,providerStatus:transfer.status}}});
     const currentWallet=await prisma.wallet.findUniqueOrThrow({where:{id:wallet.id},select:{balanceMinor:true}});
-    return res.status(status==='PENDING'?202:200).json({data:{status,reference:updated.reference,balanceMinor:currentWallet.balanceMinor}});
+    return {httpStatus:status==='PENDING'?202:200,data:{status,reference:updated.reference,balanceMinor:currentWallet.balanceMinor}};
   }catch(error){
-    if(error instanceof Error&&error.message==='INSUFFICIENT_VENDOR_WALLET_BALANCE')return res.status(409).json({error:{code:'INSUFFICIENT_WALLET_BALANCE',message:'Your vendor wallet balance is too low for this withdrawal.'}});
-    if(error instanceof PaystackError&&reservationCreated&&requestReference){await settleVendorTransfer(requestReference,'transfer.failed');return res.status(503).json({error:{code:'PAYOUT_REJECTED',message:'Paystack could not start the payout. The reserved amount has been returned to your wallet.'}});}
-    if(reservationCreated&&requestReference){console.error(JSON.stringify({event:'vendor_withdrawal_confirmation_pending',reference:requestReference,errorType:error instanceof Error?error.name:'unknown'}));return res.status(202).json({data:{status:'PENDING',reference:requestReference,message:'The transfer status is being confirmed.'}});}
+    if(error instanceof PaystackError&&reservationCreated){await settleVendorTransfer(reference,'transfer.failed');throw Object.assign(new Error('Paystack could not start the payout. The reserved amount has been returned to your wallet.'),{status:503,code:'PAYOUT_REJECTED'});}
+    if(reservationCreated&&!(error as {status?:number})?.status){console.error(JSON.stringify({event:'wallet_withdrawal_confirmation_pending',reference,errorType:error instanceof Error?error.name:'unknown'}));return {httpStatus:202,data:{status:'PENDING',reference,message:'The transfer status is being confirmed.'}};}
+    throw error;
+  }
+}
+
+app.get('/api/v1/rider/wallet',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
+  try{
+    const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId},select:{id:true,status:true}});
+    if(!rider)return res.status(403).json({error:{code:'RIDER_PROFILE_REQUIRED',message:'Submit a rider application first.'}});
+    void provisionDva(req.auth!.userId);
+    const wallet=await ensureWallet(req.auth!.userId);
+    const transactions=await prisma.walletTransaction.findMany({where:{walletId:wallet.id},orderBy:{createdAt:'desc'},take:50,select:{id:true,type:true,direction:true,status:true,amountMinor:true,balanceAfter:true,reference:true,orderId:true,createdAt:true}});
+    return res.json({data:{riderStatus:rider.status,balanceMinor:wallet.balanceMinor,currency:wallet.currency,status:wallet.status,dva:{accountNumber:wallet.dvaAccountNumber,accountName:wallet.dvaAccountName,bankName:wallet.dvaBankName,status:wallet.dvaStatus},payoutAccount:{accountLast4:wallet.payoutAccountLast4,accountName:wallet.payoutAccountName,bankName:wallet.payoutBankName,bankCode:wallet.payoutBankCode,status:wallet.payoutStatus},transactions}});
+  }catch(error){return next(error);}
+});
+
+app.post('/api/v1/rider/wallet/withdraw',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
+  const input=z.object({amountMinor:z.number().int().min(10000).max(100_000_000),idempotencyKey:z.string().uuid()}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_WITHDRAWAL',message:'Enter a withdrawal amount from ₦100 and a valid request key.'}});
+  try{
+    const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId,status:VendorStatus.APPROVED},select:{id:true}});
+    if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'An approved rider account is required.'}});
+    const result=await withdrawFromWallet({userId:req.auth!.userId,amountMinor:input.data.amountMinor,idempotencyKey:input.data.idempotencyKey,prefix:'swd',reason:'Smile rider wallet withdrawal',insufficientMessage:'Your rider wallet balance is too low for this withdrawal.'});
+    return res.status(result.httpStatus).json({data:result.data});
+  }catch(error){
+    const failure=error as Error&{status?:number;code?:string};
+    if(failure.status)return res.status(failure.status).json({error:{code:failure.code??'WITHDRAWAL_FAILED',message:failure.message}});
+    return next(error);
+  }
+});
+
+app.post('/api/v1/vendor/wallet/withdraw',requireUser,requireRole(Role.VENDOR),async(req:AuthRequest,res,next)=>{
+  const input=z.object({amountMinor:z.number().int().min(10000).max(100_000_000),idempotencyKey:z.string().uuid()}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_WITHDRAWAL',message:'Enter a withdrawal amount from ₦100 and a valid request key.'}});
+  try{
+    const vendor=await prisma.vendor.findFirst({where:{ownerId:req.auth!.userId,status:VendorStatus.APPROVED},select:{id:true}});
+    if(!vendor)return res.status(403).json({error:{code:'VENDOR_NOT_APPROVED',message:'An approved vendor account is required.'}});
+    const result=await withdrawFromWallet({userId:req.auth!.userId,amountMinor:input.data.amountMinor,idempotencyKey:input.data.idempotencyKey,prefix:'swv',reason:'Smile vendor wallet withdrawal',insufficientMessage:'Your vendor wallet balance is too low for this withdrawal.'});
+    return res.status(result.httpStatus).json({data:result.data});
+  }catch(error){
+    const failure=error as Error&{status?:number;code?:string};
+    if(failure.status)return res.status(failure.status).json({error:{code:failure.code??'WITHDRAWAL_FAILED',message:failure.message}});
     return next(error);
   }
 });
@@ -1135,34 +1495,100 @@ app.post(['/webhooks/paystack','/api/v1/webhooks/paystack'],async(req:RawRequest
   }
   try {
     if(reference&&['transfer.success','transfer.failed','transfer.reversed'].includes(event))await settleVendorTransfer(reference,event as 'transfer.success'|'transfer.failed'|'transfer.reversed');
+    if(event==='dedicatedaccount.assign.success'){
+      const dva=parsePaystackWebhookDva(data);
+      if(dva.customerCode&&dva.accountNumber){
+        await prisma.wallet.updateMany({
+          where:{paystackCustomerCode:dva.customerCode},
+          data:{
+            ...(dva.dvaId?{dvaId:dva.dvaId}:{}),
+            dvaAccountNumber:dva.accountNumber,
+            ...(dva.accountName?{dvaAccountName:dva.accountName}:{}),
+            ...(dva.bankName?{dvaBankName:dva.bankName}:{}),
+            ...(dva.bankSlug?{dvaBankSlug:dva.bankSlug}:{}),
+            dvaStatus:'ACTIVE',
+          },
+        });
+      }
+    }
+    if(event==='dedicatedaccount.assign.failed'){
+      const dva=parsePaystackWebhookDva(data);
+      if(dva.customerCode){
+        await prisma.wallet.updateMany({
+          where:{paystackCustomerCode:dva.customerCode,dvaStatus:{not:'ACTIVE'}},
+          data:{dvaStatus:'FAILED'},
+        });
+      }
+    }
+    if(['refund.processed','refund.failed','refund.needs-attention','refund.pending'].includes(event)){
+      const refund=parsePaystackWebhookRefund(data);
+      if(refund.transactionReference){
+        if(event==='refund.processed')await settlePaystackRefundFromWebhook(refund.transactionReference,'processed');
+        else if(event==='refund.failed'||event==='refund.needs-attention')await settlePaystackRefundFromWebhook(refund.transactionReference,'failed',`Paystack event: ${event}`);
+      }
+    }
     if(event==='charge.success'&&reference) {
       const verified=await verifyPaystackTransaction(reference,secret);
       if(verified.status!=='success')throw new PaystackError('Paystack verification did not confirm a successful charge.');
       const purpose=typeof verified.metadata.purpose==='string'?verified.metadata.purpose:'';
       const userId=typeof verified.metadata.userId==='string'?verified.metadata.userId:null;
       const orderId=typeof verified.metadata.orderId==='string'?verified.metadata.orderId:null;
-      if(purpose==='wallet_topup'&&userId) await creditWallet({userId,amountMinor:verified.amountMinor,reference:`paystack_${verified.reference}`,type:'TOPUP',metadata:{channel:verified.channel}});
+      if(purpose==='wallet_topup'&&userId) {
+        const creditReference=`paystack_${verified.reference}`;
+        const result=await creditWallet({userId,amountMinor:verified.amountMinor,reference:creditReference,type:'TOPUP',metadata:{channel:verified.channel}});
+        if(result.credited)emitWalletCreditNotification(userId,verified.amountMinor,creditReference,'TOPUP');
+      }
       if(verified.channel==='dedicated_nuban'&&purpose!=='wallet_topup') {
         let wallet=verified.accountNumber?await prisma.wallet.findUnique({where:{dvaAccountNumber:verified.accountNumber},select:{userId:true}}):null;
         if(!wallet&&verified.customerCode)wallet=await prisma.wallet.findUnique({where:{paystackCustomerCode:verified.customerCode},select:{userId:true}});
-        if(wallet)await creditWallet({userId:wallet.userId,amountMinor:verified.amountMinor,reference:`paystack_${verified.reference}`,type:'TOPUP',metadata:{channel:'dedicated_nuban'}});
+        if(wallet){
+          const creditReference=`paystack_${verified.reference}`;
+          const result=await creditWallet({userId:wallet.userId,amountMinor:verified.amountMinor,reference:creditReference,type:'TOPUP',metadata:{channel:'dedicated_nuban'}});
+          if(result.credited)emitWalletCreditNotification(wallet.userId,verified.amountMinor,creditReference,'DVA_TOPUP');
+        }
       }
       if(purpose==='order_payment'&&userId&&orderId) {
-        const confirmed=await prisma.$transaction(async tx=>{
-          const payment=await tx.payment.findUnique({where:{providerReference:verified.reference}});if(!payment||payment.orderId!==orderId||payment.amountMinor!==verified.amountMinor)throw new PaystackError('Payment reference does not match its order.');
-          const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.CONFIRMED}});
-          if(changed.count)await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.CONFIRMED,actorId:userId,note:'Paystack payment verified'}});
+        const outcome=await prisma.$transaction(async tx=>{
+          const payment=await tx.payment.findUnique({where:{providerReference:verified.reference}});
+          if(!payment||payment.orderId!==orderId||payment.amountMinor!==verified.amountMinor)throw new PaystackError('Payment reference does not match its order.');
+          const order=await tx.order.findUnique({where:{id:orderId},select:{id:true,customerId:true,status:true}});
+          if(!order||order.customerId!==userId)throw new PaystackError('Order does not belong to payment user.');
+          if(shouldAllowOrderPayment(order.status)){
+            const changed=await tx.order.updateMany({where:{id:orderId,customerId:userId,status:{in:[OrderStatus.PENDING_PAYMENT,OrderStatus.PAYMENT_FAILED]}},data:{status:OrderStatus.CONFIRMED}});
+            if(changed.count)await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.CONFIRMED,actorId:userId,note:'Paystack payment verified'}});
+            await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
+            return {action:changed.count>0?'confirmed':'noop',paymentId:payment.id} as const;
+          }
+          if(isCancelledOrRefundOrderStatus(order.status)){
+            if(payment.status==='REFUNDED')return {action:'noop',paymentId:payment.id} as const;
+            await tx.payment.update({where:{id:payment.id},data:{status:'REFUND_PENDING'}});
+            if(order.status===OrderStatus.CANCELLED||order.status===OrderStatus.REJECTED){
+              await tx.order.update({where:{id:orderId},data:{status:OrderStatus.REFUND_PENDING}});
+              await tx.orderStatusEvent.create({data:{orderId,status:OrderStatus.REFUND_PENDING,actorId:userId,note:'Late Paystack payment received after cancellation; initiating refund'}});
+            }
+            return {action:'refund',paymentId:payment.id} as const;
+          }
           await tx.payment.update({where:{id:payment.id},data:{status:'SUCCEEDED'}});
-          return changed.count>0;
+          return {action:'noop',paymentId:payment.id} as const;
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
-        if(confirmed)emitOrderStatusNotification(orderId,OrderStatus.CONFIRMED);
+        if(outcome.action==='confirmed')emitOrderStatusNotification(orderId,OrderStatus.CONFIRMED);
+        if(outcome.action==='refund'){
+          emitOrderStatusNotification(orderId,OrderStatus.REFUND_PENDING);
+          await initiatePaystackRefundForOrder({orderId,paymentId:outcome.paymentId,providerReference:verified.reference,amountMinor:verified.amountMinor,actorId:userId,reason:'Automatic refund for cancelled order'});
+        }
       }
     }
     if(event==='charge.failed'&&reference){
       const failed=await prisma.payment.updateMany({where:{providerReference:reference,status:'PENDING'},data:{status:'FAILED'}});
       if(failed.count){
         const payment=await prisma.payment.findUnique({where:{providerReference:reference},select:{orderId:true}});
-        if(payment)emitOrderStatusNotification(payment.orderId,OrderStatus.PAYMENT_FAILED);
+        if(payment){
+          const otherActive=await prisma.payment.count({where:{orderId:payment.orderId,status:{in:['PENDING','SUCCEEDED']}}});
+          if(!otherActive){
+            await prisma.order.updateMany({where:{id:payment.orderId,status:OrderStatus.PENDING_PAYMENT},data:{status:OrderStatus.PAYMENT_FAILED}});
+          }
+          emitOrderStatusNotification(payment.orderId,OrderStatus.PAYMENT_FAILED);
+        }
       }
     }
     await prisma.paystackWebhookEvent.update({where:{eventKey},data:{processedAt:new Date()}});
@@ -1177,12 +1603,12 @@ async function cancelOrderForRole(orderId:string,userId:string,role:Cancellation
   if(role==='RIDER'&&(!rider||rider.status!==VendorStatus.APPROVED))throw Object.assign(new Error('An approved rider account is required.'),{status:403,code:'RIDER_NOT_APPROVED'});
   const order=await prisma.order.findFirst({where:{...(role==='RIDER'?{delivery:{is:{id:orderId,assignedRiderId:rider!.id}}}:{id:orderId}),...(role==='CUSTOMER'?{customerId:userId}:{}),...(owner?{vendorId:owner.id}:{})},include:{items:{select:{productId:true,quantity:true}},delivery:{select:{id:true,status:true,assignedRiderId:true,assignedRider:{select:{userId:true}}}}}});
   if(!order)throw Object.assign(new Error('This order was not found or is not assigned to you.'),{status:404,code:'ORDER_NOT_FOUND'});
-  const cancellableStatuses:OrderStatus[]=[OrderStatus.PENDING_PAYMENT,OrderStatus.CONFIRMED,OrderStatus.ACCEPTED_BY_VENDOR,OrderStatus.PREPARING,OrderStatus.READY_FOR_PICKUP,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP];
+  const cancellableStatuses:OrderStatus[]=[OrderStatus.PENDING_PAYMENT,OrderStatus.PAYMENT_FAILED,OrderStatus.CONFIRMED,OrderStatus.ACCEPTED_BY_VENDOR,OrderStatus.PREPARING,OrderStatus.READY_FOR_PICKUP,OrderStatus.RIDER_ASSIGNED,OrderStatus.PICKED_UP];
   if(!cancellableStatuses.includes(order.status))throw Object.assign(new Error('This order can no longer be cancelled.'),{status:409,code:'ORDER_NOT_CANCELLABLE'});
   if(role!=='RIDER'&&order.status===OrderStatus.PICKED_UP)throw Object.assign(new Error('The order can no longer be cancelled after rider pickup.'),{status:409,code:'ORDER_NOT_CANCELLABLE'});
   if(role==='RIDER'&&(!order.delivery||!activeDeliveryStatuses.includes(order.delivery.status)))throw Object.assign(new Error('Only an active delivery assigned to you can be cancelled.'),{status:409,code:'DELIVERY_NOT_CANCELLABLE'});
   const range=nigeriaDayRange();
-  await prisma.$transaction(async tx=>{
+  const refundOutcome=await prisma.$transaction(async tx=>{
     const count=await tx.orderStatusEvent.count({where:{actorId:userId,status:OrderStatus.CANCELLED,createdAt:range}});
     if(count>=cancellationLimits[role])throw Object.assign(new Error(`You reached today’s ${cancellationLimits[role]} cancellation limit.`),{status:429,code:'DAILY_CANCELLATION_LIMIT'});
     const changed=await tx.order.updateMany({where:{id:order.id,status:order.status},data:{status:OrderStatus.CANCELLED}});
@@ -1192,13 +1618,24 @@ async function cancelOrderForRole(orderId:string,userId:string,role:Cancellation
       await tx.delivery.updateMany({where:{id:order.delivery.id,status:{in:[DeliveryStatus.OFFERING,DeliveryStatus.UNASSIGNED,DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}},data:{status:DeliveryStatus.EXCEPTION,assignedRiderId:null}});
       await tx.riderOffer.updateMany({where:{deliveryId:order.delivery.id,status:RiderOfferStatus.PENDING},data:{status:RiderOfferStatus.EXPIRED}});
     }
-    await tx.payment.updateMany({where:{orderId:order.id,isDemo:true,status:'SUCCEEDED'},data:{status:'REFUNDED'}});
     await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.CANCELLED,actorId:userId,note:cancellationNote(reason,details)}});
     if(role==='RIDER'&&rider)await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
     else if(order.delivery?.assignedRiderId)await tx.riderProfile.updateMany({where:{id:order.delivery.assignedRiderId},data:{available:true}});
+    return refundPaidOrderInTx(tx,{orderId:order.id,customerId:order.customerId,actorId:userId,reason:cancellationNote(reason,details)});
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
   emitOrderStatusNotification(order.id,OrderStatus.CANCELLED,order.delivery?.assignedRider?.userId);
-  return {id:order.id,status:OrderStatus.CANCELLED,reason,details:details??null};
+  let finalStatus:OrderStatus=OrderStatus.CANCELLED;
+  if(refundOutcome.kind==='wallet'){
+    finalStatus=OrderStatus.REFUNDED;
+    emitOrderStatusNotification(order.id,OrderStatus.REFUNDED);
+    emitWalletCreditNotification(refundOutcome.userId,refundOutcome.amountMinor,refundOutcome.reference,'REFUND',order.id);
+  }else if(refundOutcome.kind==='paystack'){
+    finalStatus=OrderStatus.REFUND_PENDING;
+    emitOrderStatusNotification(order.id,OrderStatus.REFUND_PENDING);
+    const refundResult=await initiatePaystackRefundForOrder({orderId:order.id,paymentId:refundOutcome.paymentId,providerReference:refundOutcome.providerReference,amountMinor:refundOutcome.amountMinor,actorId:userId,reason:cancellationNote(reason,details)});
+    if(refundResult.status==='processed')finalStatus=OrderStatus.REFUNDED;
+  }
+  return {id:order.id,status:finalStatus,reason,details:details??null};
 }
 async function cancellationRoute(req:AuthRequest,res:import('express').Response,next:import('express').NextFunction,role:CancellationRole){
   const input=cancellationInput(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_CANCELLATION_REASON',message:input.error.issues[0]?.message??'Choose a cancellation reason.'}});
@@ -1214,7 +1651,8 @@ app.post('/api/v1/rider/deliveries/:deliveryId/cancel',requireUser,requireRole(R
 app.get('/api/v1/orders',requireUser,requireRole(Role.CUSTOMER),async (req:AuthRequest,res,next) => {
   try {
     const rows=await prisma.order.findMany({where:{customerId:req.auth!.userId},orderBy:{createdAt:'desc'},take:50,include:{items:{include:{addons:true}},vendor:{select:{id:true,name:true}},events:{select:{id:true,status:true,note:true,createdAt:true},orderBy:{createdAt:'asc'}},delivery:{include:{assignedRider:{include:{user:{select:{name:true,phone:true}}}}}}}});
-    const data=rows.map(({delivery,...order})=>{const riderVisible=Boolean(delivery?.assignedRiderId&&activeDeliveryStatuses.includes(delivery.status));return{...order,delivery:delivery?{status:delivery.status,assignedAt:delivery.assignedAt,riderName:riderVisible?delivery.assignedRider?.user.name??null:null,riderPhone:riderVisible?delivery.assignedRider?.user.phone??null:null,riderVehicleType:riderVisible?delivery.assignedRider?.vehicleType??null:null}:null,deliveryCode:delivery?.assignedRiderId&&activeDeliveryStatuses.includes(delivery.status)?deliveryOtp(delivery.id):null};});
+    const hasProofSecret=Boolean(deliveryProofSecret());
+    const data=rows.map(({delivery,...order})=>{const riderVisible=Boolean(delivery?.assignedRiderId&&activeDeliveryStatuses.includes(delivery.status));return{...order,delivery:delivery?{status:delivery.status,assignedAt:delivery.assignedAt,riderName:riderVisible?delivery.assignedRider?.user.name??null:null,riderPhone:riderVisible?delivery.assignedRider?.user.phone??null:null,riderVehicleType:riderVisible?delivery.assignedRider?.vehicleType??null:null}:null,deliveryCode:hasProofSecret&&delivery?.assignedRiderId&&activeDeliveryStatuses.includes(delivery.status)?deliveryOtp(delivery.id,delivery.assignedRiderId):null};});
     return res.json({data});
   }
   catch(error) { return next(error); }
@@ -1235,7 +1673,12 @@ app.get('/api/v1/orders/:orderId/tracking',requireUser,requireRole(Role.CUSTOMER
 });
 app.get('/api/v1/wallet/transactions',requireUser,requireRole(Role.CUSTOMER),async(req:AuthRequest,res,next)=>{
   try{
-    const data=await prisma.payment.findMany({where:{order:{customerId:req.auth!.userId}},orderBy:{createdAt:'desc'},take:100,select:{id:true,amountMinor:true,status:true,provider:true,isDemo:true,createdAt:true,order:{select:{id:true,displayNumber:true,vendor:{select:{name:true}}}}}});
+    const wallet=await ensureWallet(req.auth!.userId);
+    const [payments,walletTransactions]=await Promise.all([
+      prisma.payment.findMany({where:{order:{customerId:req.auth!.userId}},orderBy:{createdAt:'desc'},take:100,select:{id:true,amountMinor:true,status:true,provider:true,providerReference:true,isDemo:true,createdAt:true,order:{select:{id:true,displayNumber:true,vendor:{select:{name:true}}}}}}),
+      prisma.walletTransaction.findMany({where:{walletId:wallet.id},orderBy:{createdAt:'desc'},take:100,select:{id:true,type:true,direction:true,status:true,amountMinor:true,balanceAfter:true,reference:true,orderId:true,metadata:true,createdAt:true,order:{select:{id:true,displayNumber:true,vendor:{select:{name:true}}}}}}),
+    ]);
+    const data=buildCustomerWalletActivity(payments,walletTransactions,100);
     return res.json({data});
   }catch(error){return next(error);}
 });
@@ -1256,7 +1699,7 @@ app.post('/api/v1/vendor/orders/:orderId/pickup',requireUser,requireRole(Role.VE
     const vendor=await prisma.vendor.findFirst({where:{ownerId:req.auth!.userId,status:VendorStatus.APPROVED},select:{id:true}});if(!vendor)return res.status(403).json({error:{code:'VENDOR_NOT_APPROVED',message:'An approved vendor account is required.'}});
     const order=await prisma.order.findFirst({where:{id:routeParam(req,'orderId'),vendorId:vendor.id},select:{id:true,delivery:{select:{id:true,status:true,assignedRiderId:true,pickupVerifiedAt:true,pickupProofAttempts:true}}}});if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Order not found.'}});
     const delivery=order.delivery;if(!delivery||delivery.status!==DeliveryStatus.ASSIGNED||!delivery.assignedRiderId)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This order does not have a rider awaiting pickup.'}});if(delivery.pickupVerifiedAt)return res.status(409).json({error:{code:'PICKUP_ALREADY_VERIFIED',message:'The rider pickup has already been verified.'}});if(delivery.pickupProofAttempts>=5)return res.status(429).json({error:{code:'PICKUP_CODE_LOCKED',message:'Too many incorrect codes. Contact support.'}});
-    const expected=Buffer.from(vendorPickupOtp(delivery.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,status:DeliveryStatus.ASSIGNED,pickupVerifiedAt:null,pickupProofAttempts:{lt:5}},data:{pickupProofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'PICKUP_CODE_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_PICKUP_CODE',message:'That rider pickup code does not match. Ask the rider to show it again.'}});}
+    const expected=Buffer.from(vendorPickupOtp(delivery.id,delivery.assignedRiderId));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,status:DeliveryStatus.ASSIGNED,pickupVerifiedAt:null,pickupProofAttempts:{lt:5}},data:{pickupProofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'PICKUP_CODE_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_PICKUP_CODE',message:'That rider pickup code does not match. Ask the rider to show it again.'}});}
     await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,status:DeliveryStatus.ASSIGNED,pickupVerifiedAt:null},data:{status:DeliveryStatus.PICKED_UP,pickedUpAt:new Date(),pickupVerifiedAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:order.id},data:{status:OrderStatus.PICKED_UP}});await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.PICKED_UP,actorId:req.auth!.userId,note:'Vendor verified rider pickup code'}});});
     emitOrderStatusNotification(order.id,OrderStatus.PICKED_UP);
     return res.json({data:{deliveryId:delivery.id,status:DeliveryStatus.PICKED_UP,verified:true}});
@@ -1280,18 +1723,30 @@ app.post('/api/v1/vendor/orders/:orderId/status',requireUser,requireRole(Role.VE
       if(update.count !== 1) throw new Error('ORDER_STATE_CONFLICT');
       const rejectionNote=input.data.reason==='NOT_AVAILABLE'?'Declined: item not available':'Declined: out of stock';
       await tx.orderStatusEvent.create({data:{orderId:order.id,status:input.data.status,actorId:req.auth!.userId,note:input.data.status===OrderStatus.REJECTED?rejectionNote:null}});
-      if(input.data.status === OrderStatus.REJECTED) await tx.payment.updateMany({where:{orderId:order.id,isDemo:true,status:'SUCCEEDED'},data:{status:'REFUNDED'}});
+      const refundOutcome:OrderRefundTxOutcome=input.data.status===OrderStatus.REJECTED
+        ?await refundPaidOrderInTx(tx,{orderId:order.id,customerId:order.customerId,actorId:req.auth!.userId,reason:rejectionNote})
+        :{kind:'none'};
       let deliveryId:string|undefined;
       if(input.data.status === OrderStatus.READY_FOR_PICKUP) {
         const delivery=await tx.delivery.create({data:{orderId:order.id,status:DeliveryStatus.UNASSIGNED}});
         deliveryId=delivery.id;
       }
-      const updatedOrder=await tx.order.findUnique({where:{id:order.id},include:{items:true,events:{orderBy:{createdAt:'asc'}}}});
-      return {updatedOrder,deliveryId};
-    });
+      const updatedOrder=await tx.order.findUnique({where:{id:order.id},include:{items:{include:{addons:true}},events:{orderBy:{createdAt:'asc'}},delivery:{include:{assignedRider:{include:{user:{select:{name:true}}}}}}}});
+      return {updatedOrder,deliveryId,refundOutcome};
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     if(result.deliveryId)await dispatchDeliveryOffers(result.deliveryId);
     emitOrderStatusNotification(order.id,input.data.status);
-    return res.json({data:result.updatedOrder});
+    if(result.refundOutcome.kind==='wallet'){
+      emitOrderStatusNotification(order.id,OrderStatus.REFUNDED);
+      emitWalletCreditNotification(result.refundOutcome.userId,result.refundOutcome.amountMinor,result.refundOutcome.reference,'REFUND',order.id);
+    }else if(result.refundOutcome.kind==='paystack'){
+      emitOrderStatusNotification(order.id,OrderStatus.REFUND_PENDING);
+      await initiatePaystackRefundForOrder({orderId:order.id,paymentId:result.refundOutcome.paymentId,providerReference:result.refundOutcome.providerReference,amountMinor:result.refundOutcome.amountMinor,actorId:req.auth!.userId,reason:'Vendor declined order'});
+    }
+    const refreshed=await prisma.order.findUnique({where:{id:order.id},include:{items:{include:{addons:true}},events:{orderBy:{createdAt:'asc'}},delivery:{include:{assignedRider:{include:{user:{select:{name:true}}}}}}}});
+    const sourceOrder=refreshed??result.updatedOrder;
+    const finalOrder=sourceOrder?(()=>{const {delivery,...rest}=sourceOrder;return{...rest,delivery:delivery?{status:delivery.status,assignedAt:delivery.assignedAt,riderName:delivery.assignedRider?.user.name??null,pickupVerified:delivery.pickupVerifiedAt!==null}:null};})():null;
+    return res.json({data:finalOrder});
   } catch(error) {
     if(error instanceof Error && error.message === 'ORDER_STATE_CONFLICT') return res.status(409).json({error:{code:'ORDER_STATE_CONFLICT',message:'The order changed. Refresh and try again.'}});
     return next(error);
@@ -1304,7 +1759,7 @@ app.get('/api/v1/admin/overview',requireUser,requireAdminPermission('dashboard.r
   const dateRange=input.data.from||input.data.to?{createdAt:{...(input.data.from?{gte:input.data.from}:{}),...(input.data.to?{lt:input.data.to}:{})}}:{};
   const locationFreshSince=new Date(Date.now()-5*60_000);
   try{
-    const [groups,customers,vendors,riders,availableRiders,gmv,deliveryFees,payments,delivered,recentOrders,trend]=await Promise.all([
+    const [groups,customers,vendors,riders,availableRiders,gmv,deliveryFees,serviceFees,payments,delivered,recentOrders,trend]=await Promise.all([
       prisma.order.groupBy({by:['status'],where:{isDemo:false,...dateRange},_count:{_all:true}}),
       prisma.user.count({where:{isDemo:false,roles:{has:Role.CUSTOMER}}}),
       prisma.vendor.count({where:{isDemo:false,status:VendorStatus.APPROVED}}),
@@ -1312,6 +1767,7 @@ app.get('/api/v1/admin/overview',requireUser,requireAdminPermission('dashboard.r
       prisma.riderProfile.count({where:{user:{isDemo:false},status:VendorStatus.APPROVED,available:true,location:{is:{updatedAt:{gte:locationFreshSince}}}}}),
       prisma.order.aggregate({where:{isDemo:false,status:OrderStatus.DELIVERED,...dateRange},_sum:{subtotalMinor:true}}),
       prisma.order.aggregate({where:{isDemo:false,status:OrderStatus.DELIVERED,...dateRange},_sum:{deliveryFeeMinor:true}}),
+      prisma.order.aggregate({where:{isDemo:false,status:OrderStatus.DELIVERED,...dateRange},_sum:{serviceFeeMinor:true}}),
       prisma.payment.aggregate({where:{isDemo:false,status:'SUCCEEDED',...(input.data.from||input.data.to?{createdAt:{...(input.data.from?{gte:input.data.from}:{}),...(input.data.to?{lt:input.data.to}:{})}}:{})},_sum:{amountMinor:true}}),
       prisma.delivery.findMany({where:{status:DeliveryStatus.DELIVERED,deliveredAt:input.data.from||input.data.to?{...(input.data.from?{gte:input.data.from}:{}),...(input.data.to?{lt:input.data.to}:{})}:{not:null},order:{isDemo:false,...dateRange}},select:{assignedAt:true,deliveredAt:true}}),
       prisma.order.findMany({where:{isDemo:false,...dateRange},orderBy:{createdAt:'desc'},take:8,select:{id:true,displayNumber:true,status:true,totalMinor:true,createdAt:true,customer:{select:{name:true}},vendor:{select:{name:true}}}}),
@@ -1333,11 +1789,13 @@ app.get('/api/v1/admin/overview',requireUser,requireAdminPermission('dashboard.r
     const terminal=completed+cancelled;
     const durationRows=delivered.filter(row=>row.assignedAt&&row.deliveredAt);
     const averageDeliveryMinutes=durationRows.length?Math.round(durationRows.reduce((sum,row)=>sum+(row.deliveredAt!.getTime()-row.assignedAt!.getTime())/60_000,0)/durationRows.length):null;
+    const deliveredDeliveryFeesMinor=deliveryFees._sum.deliveryFeeMinor??0;
+    const deliveredServiceFeesMinor=serviceFees._sum.serviceFeeMinor??0;
     return res.json({data:{
       period:{from:input.data.from??null,to:input.data.to??null,timeZone:'Africa/Lagos'},
       orders:Object.values(counts).reduce((sum,count)=>sum+count,0),completedOrders:completed,activeOrders:active,pendingOrders:counts[OrderStatus.PENDING_PAYMENT]??0,cancelledOrders:cancelled,
-      gmvMinor:gmv._sum.subtotalMinor??0,deliveryFeesMinor:deliveryFees._sum.deliveryFeeMinor??0,collectedPaymentsMinor:payments._sum.amountMinor??0,
-      platformRevenueMinor:null,riderEarningsMinor:null,customers,activeVendors:vendors,activeRiders:availableRiders,approvedRiders:riders,
+      gmvMinor:gmv._sum.subtotalMinor??0,deliveryFeesMinor:deliveredDeliveryFeesMinor,collectedPaymentsMinor:payments._sum.amountMinor??0,
+      platformRevenueMinor:deliveredServiceFeesMinor,riderEarningsMinor:deliveredDeliveryFeesMinor,customers,activeVendors:vendors,activeRiders:availableRiders,approvedRiders:riders,
       averageOrderValueMinor:completed?Math.round((gmv._sum.subtotalMinor??0)/completed):null,averageDeliveryMinutes,
       completionRate:terminal?completed/terminal:null,recentOrders,trend:trend.map(row=>({day:row.day,orders:row.orders,gmvMinor:Number(row.gmvMinor)})),
     }});
@@ -1404,6 +1862,35 @@ app.get('/api/v1/admin/transactions',requireUser,requireAdminPermission('finance
       prisma.payment.count({where})
     ]);
     return res.json({data,total,page:input.data.page,pageSize:input.data.limit});
+  }catch(error){return next(error);}
+});
+app.post('/api/v1/admin/orders/:orderId/refund',requireUser,requireAdminPermission('finance.manage'),async(req:AuthRequest,res,next)=>{
+  const orderId=routeParam(req,'orderId');
+  const input=z.object({reason:z.string().trim().min(5).max(500)}).safeParse(req.body);
+  if(!input.success)return res.status(400).json({error:{code:'INVALID_REFUND_REASON',message:'A reason of at least five characters is required to refund an order.'}});
+  try{
+    const order=await prisma.order.findFirst({where:{id:orderId,isDemo:false},select:{id:true,customerId:true,status:true}});
+    if(!order)return res.status(404).json({error:{code:'ORDER_NOT_FOUND',message:'Non-demo order not found.'}});
+    const txOutcome=await prisma.$transaction(async tx=>{
+      const existingPending=await tx.payment.findFirst({where:{orderId:order.id,isDemo:false,provider:'paystack',status:'REFUND_PENDING'},orderBy:{createdAt:'desc'},select:{id:true,providerReference:true,amountMinor:true}});
+      if(existingPending&&existingPending.providerReference){
+        await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'ADMIN_ORDER_REFUND_RETRIED',targetType:'Order',targetId:order.id,metadata:{paymentId:existingPending.id,reason:input.data.reason},isDemo:false}});
+        return {kind:'paystack',paymentId:existingPending.id,providerReference:existingPending.providerReference,amountMinor:existingPending.amountMinor} as const;
+      }
+      const outcome=await refundPaidOrderInTx(tx,{orderId:order.id,customerId:order.customerId,actorId:req.auth!.userId,reason:input.data.reason});
+      if(outcome.kind==='wallet'||outcome.kind==='paystack'){
+        await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'ADMIN_ORDER_REFUND_INITIATED',targetType:'Order',targetId:order.id,metadata:{kind:outcome.kind,amountMinor:outcome.amountMinor,reason:input.data.reason},isDemo:false}});
+      }
+      return outcome;
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    if(txOutcome.kind==='none'||txOutcome.kind==='demo')return res.status(409).json({error:{code:'ORDER_NOT_REFUNDABLE',message:'This order does not have a refundable payment.'}});
+    if(txOutcome.kind==='wallet'){
+      emitOrderStatusNotification(order.id,OrderStatus.REFUNDED);
+      emitWalletCreditNotification(txOutcome.userId,txOutcome.amountMinor,txOutcome.reference,'REFUND',order.id);
+      return res.json({data:{orderId:order.id,status:OrderStatus.REFUNDED,method:'wallet'}});
+    }
+    const result=await initiatePaystackRefundForOrder({orderId:order.id,paymentId:txOutcome.paymentId,providerReference:txOutcome.providerReference,amountMinor:txOutcome.amountMinor,actorId:req.auth!.userId,reason:input.data.reason});
+    return res.status(result.status==='processed'?200:202).json({data:{orderId:order.id,status:result.status==='processed'?OrderStatus.REFUNDED:OrderStatus.REFUND_PENDING,method:'paystack',refundStatus:result.status}});
   }catch(error){return next(error);}
 });
 app.get('/api/v1/admin/applications',requireUser,async(req:AuthRequest,res,next)=>{

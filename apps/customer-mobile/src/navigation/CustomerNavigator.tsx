@@ -6,7 +6,7 @@ import { ActivityIndicator, AppState, BackHandler, FlatList, Image, ImageBackgro
 import { Ionicons } from '../components/AppIcon';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as NativeSecureStore from 'expo-secure-store';
-import { ApiError, type CustomerOrder, type NotificationInbox, type NotificationInboxItem, type Product, type Session, type Vendor } from '@makanza/mobile-core';
+import { ApiError, type CustomerOrder, type NotificationInbox, type NotificationInboxItem, type OrderQuote, type Product, type Session, type Vendor } from '@makanza/mobile-core';
 import type { CancellationReason } from '@makanza/mobile-ui';
 import OnboardingScreen from '../onboarding/OnboardingScreen';
 import FontSplashScreen from '../components/FontSplashScreen';
@@ -99,7 +99,9 @@ export default function App(){
   const [cart,setCart]=useState<CartLine[]>([]);
   const [cartVisible,setCartVisible]=useState(false);
   const [openCartAfterAddress,setOpenCartAfterAddress]=useState(false);
-  const [pendingPaymentOrder,setPendingPaymentOrder]=useState<{id:string;totalMinor:number}|null>(null);
+  const [pendingPaymentOrder,setPendingPaymentOrder]=useState<{id:string;totalMinor:number;subtotalMinor?:number;deliveryFeeMinor?:number;serviceFeeMinor?:number;deliveryDistanceMeters?:number|null}|null>(null);
+  const [cartQuote,setCartQuote]=useState<OrderQuote|null>(null);
+  const [cartQuoteLoading,setCartQuoteLoading]=useState(false);
   const [paymentPickerVisible,setPaymentPickerVisible]=useState(false);
   const [paymentError,setPaymentError]=useState('');
   const [orderCheckout,setOrderCheckout]=useState<{orderId:string;authorizationUrl:string;reference:string}|null>(null);
@@ -226,8 +228,9 @@ export default function App(){
   const loadNotifications=useCallback(async(currentToken:string,quiet=false)=>{if(!quiet)setNotificationsLoading(true);setNotificationsError('');try{setNotificationInbox(await api.get<NotificationInbox>('/notifications',currentToken));}catch(e){setNotificationsError(e instanceof Error?e.message:'Could not load notifications.');}finally{if(!quiet)setNotificationsLoading(false);}},[]);
   const markNotificationRead=async(item:NotificationInboxItem)=>{if(!token||item.readAt)return;try{await api.patch(`/notifications/${encodeURIComponent(item.id)}/read`,{},token);setNotificationInbox(current=>({...current,unreadCount:Math.max(0,current.unreadCount-1),items:current.items.map(row=>row.id===item.id?{...row,readAt:new Date().toISOString()}:row)}));}catch(e){setNotice(e instanceof Error?`Could not mark notification read: ${e.message}`:'Could not mark notification read.');}};
   const markAllNotificationsRead=async()=>{if(!token)return;try{await api.patch('/notifications/read-all',{},token);const readAt=new Date().toISOString();setNotificationInbox(current=>({...current,unreadCount:0,items:current.items.map(item=>({...item,readAt}))}));}catch(e){setNotificationsError(e instanceof Error?e.message:'Could not mark notifications read.');}};
+  const isPushPermitted=Platform.OS!=='web'&&!isRunningInExpoGo()&&process.env.EXPO_PUBLIC_ENABLE_PUSH!=='false';
   useEffect(()=>{
-    if(!token||Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return;
+    if(!token||!isPushPermitted)return;
     let active=true;
     void (async()=>{
       try{
@@ -236,19 +239,19 @@ export default function App(){
         let permission=await Notifications.getPermissionsAsync();
         if(!permission.granted)permission=await Notifications.requestPermissionsAsync();
         if(!permission.granted)return;
-        const projectId=process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
-        if(!projectId)throw new Error('Set EXPO_PUBLIC_EAS_PROJECT_ID in the mobile app build environment.');
+        const projectId=process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim()||'f6ccdff4-cf4d-4ced-93df-fcaa053adede';
         const deviceToken=(await Notifications.getExpoPushTokenAsync({projectId})).data;
         await api.post('/notifications/devices',{token:deviceToken,platform:Platform.OS==='ios'?'ios':'android'},token);
         if(active)setPushToken(deviceToken);
       }catch(reason){if(active)setNotice(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');}
     })();
     return()=>{active=false;};
-  },[token]);
+  },[token,isPushPermitted]);
   useEffect(()=>{
     if(!token)return;
     const appState=AppState.addEventListener('change',state=>{if(state==='active')void loadNotifications(token,true);});
-    if(Platform.OS==='web'||isRunningInExpoGo()||process.env.EXPO_PUBLIC_ENABLE_PUSH!=='true')return()=>appState.remove();
+    const pollTimer=setInterval(()=>void loadNotifications(token,true),20000);
+    if(!isPushPermitted)return()=>{appState.remove();clearInterval(pollTimer);};
     let active=true;
     let received:{remove:()=>void}|undefined;
     let response:{remove:()=>void}|undefined;
@@ -260,19 +263,37 @@ export default function App(){
         void loadNotifications(token);
       });
     }).catch(reason=>{if(active)setNotificationsError(reason instanceof Error?`Push notifications are unavailable: ${reason.message}`:'Push notifications are unavailable.');});
-    return()=>{active=false;received?.remove();response?.remove();appState.remove();};
-  },[token,loadNotifications]);
+    return()=>{active=false;received?.remove();response?.remove();appState.remove();clearInterval(pollTimer);};
+  },[token,loadNotifications,isPushPermitted]);
   useEffect(()=>{if(token)void loadNotifications(token,true);else setNotificationInbox({items:[],unreadCount:0});},[token,loadNotifications]);
   useEffect(()=>{if(screen==='notifications'&&token)void loadNotifications(token);},[screen,token,loadNotifications]);
-  const cancelCustomerOrder=async(orderId:string,reason:CancellationReason,details:string)=>{if(mobileEnv.demoMode){const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Lagos',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());if(demoCancellationMeter.day===day&&demoCancellationMeter.count>=3){setError('You reached today’s 3 cancellation limit and cannot place another order today.');return;}setDemoCancellationMeter(current=>({day,count:(current.day===day?current.count:0)+1}));setOrders(rows=>rows.map(order=>order.id===orderId?{...order,status:'CANCELLED',events:[...order.events,{id:`demo-cancel-${Date.now()}`,status:'CANCELLED',createdAt:new Date().toISOString(),note:`Cancelled: ${details||reason.replace(/_/g,' ').toLowerCase()}`}]}:order));setNotice('Sample order cancelled locally.');return;}if(!token)return;setBusy(true);setError('');try{await api.post(`/orders/${encodeURIComponent(orderId)}/cancel`,{reason,details:details||undefined},token);setNotice('Order cancelled. Your reason was recorded.');await loadOrders(token);}catch(e){setError(e instanceof Error?e.message:'Could not cancel this order.');}finally{setBusy(false);}};
+  const cancelCustomerOrder=async(orderId:string,reason:CancellationReason,details:string)=>{if(mobileEnv.demoMode){const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Lagos',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());if(demoCancellationMeter.day===day&&demoCancellationMeter.count>=3){setError('You reached today’s 3 cancellation limit and cannot place another order today.');return;}setDemoCancellationMeter(current=>({day,count:(current.day===day?current.count:0)+1}));setOrders(rows=>rows.map(order=>order.id===orderId?{...order,status:'CANCELLED',events:[...order.events,{id:`demo-cancel-${Date.now()}`,status:'CANCELLED',createdAt:new Date().toISOString(),note:`Cancelled: ${details||reason.replace(/_/g,' ').toLowerCase()}`}]}:order));setNotice('Sample order cancelled locally.');return;}if(!token)return;setBusy(true);setError('');try{const cancelled=await api.post<{id:string;status:string}>(`/orders/${encodeURIComponent(orderId)}/cancel`,{reason,details:details||undefined},token);if(pendingPaymentOrder?.id===orderId){setPendingPaymentOrder(null);setPaymentPickerVisible(false);setOrderCheckout(null);}setNotice(cancelled.status==='REFUNDED'?'Order cancelled and refunded to your Smile wallet.':cancelled.status==='REFUND_PENDING'?'Order cancelled. Your Paystack refund is being processed.':'Order cancelled. Your reason was recorded.');await loadOrders(token);}catch(e){setError(e instanceof Error?e.message:'Could not cancel this order.');}finally{setBusy(false);}};
   useEffect(()=>{let active=true;if(!vendors.length){setPopularProducts([]);setPopularLoading(false);setPopularError('');return()=>{active=false;};}setPopularLoading(true);setPopularError('');Promise.all(vendors.slice(0,4).map(async vendor=>({vendor,products:await api.get<Product[]>(`/vendors/${encodeURIComponent(vendor.id)}/products`,token)}))).then(groups=>{if(active)setPopularProducts(groups.flatMap(group=>group.products.map(product=>({vendor:group.vendor,product}))));}).catch(reason=>{if(active)setPopularError(reason instanceof Error?reason.message:'Could not load popular items.');}).finally(()=>{if(active)setPopularLoading(false);});return()=>{active=false;};},[vendors]);
-  useEffect(()=>{if(screen!=='orders'||!token||!autoRefresh)return;const timer=setInterval(()=>void loadOrders(token,true),10000);return()=>clearInterval(timer);},[screen,token,loadOrders,autoRefresh]);
+  useEffect(()=>{if((screen!=='orders'&&screen!=='order-detail')||!token||!autoRefresh)return;const timer=setInterval(()=>void loadOrders(token,true),10000);return()=>clearInterval(timer);},[screen,token,loadOrders,autoRefresh]);
 
   useEffect(()=>{let active=true;void loadVendors('',token).finally(()=>{if(active)setCatalogReady(true);});return()=>{active=false;};},[token]);
   useEffect(()=>{let active=true;void (async()=>{try{if(mobileEnv.demoMode)return;const saved=await SecureStore.getItemAsync('makanza-session');if(!saved)return;let body:Session;try{body=JSON.parse(saved) as Session;}catch{await SecureStore.deleteItemAsync('makanza-session');return;}if(!body?.token||!body.user?.roles?.includes('CUSTOMER')){await SecureStore.deleteItemAsync('makanza-session');return;}if(active){setSession(body);}try{const identity=await api.get<{userId:string;roles:string[];isDemo:boolean}>('/auth/me',body.token);if(!identity.roles.includes('CUSTOMER')){await SecureStore.deleteItemAsync('makanza-session');if(active){setSession(null);setNotice('This account does not have customer access.');}}else if(active)setSession({...body,user:{...body.user,roles:identity.roles,isDemo:identity.isDemo}});}catch(e){if(e instanceof ApiError&&e.status===401){await SecureStore.deleteItemAsync('makanza-session');if(active){setSession(null);}}else if(active)setNotice(e instanceof Error?e.message:'Could not validate your saved session. Continuing with the saved account.');}}finally{if(active)setAuthReady(true);}})();return()=>{active=false;};},[]);
   useEffect(()=>{if(!token||!session?.user.id)return;let alive=true;void (async()=>{try{const [places,saved]=await Promise.all([api.get<SavedAddress[]>('/addresses',token),SecureStore.getItemAsync(selectedAddressStorageKey(session.user.id))]);if(!alive)return;const chosen=places.find(x=>x.id===saved&&hasDeliveryCoordinates(x))??places.find(hasDeliveryCoordinates)??null;if(chosen)setSelectedAddress(chosen);}catch(e){if(alive)setNotice(e instanceof Error?`Saved places unavailable: ${e.message}`:'Saved places unavailable.');}})();return()=>{alive=false;};},[token,session?.user.id]);
   useEffect(()=>{if(!activeVendor)return;let alive=true;setProducts([]);setLoading(true);setError('');api.get<Product[]>(`/vendors/${encodeURIComponent(activeVendor.id)}/products`,token).then(rows=>{if(alive)setProducts(rows);}).catch(e=>{if(alive){const message=e instanceof Error?e.message:'Could not load this menu.';setError(message);}}).finally(()=>{if(alive)setLoading(false);});return()=>{alive=false;};},[activeVendor,token]);
   const subtotal=useMemo(()=>cart.reduce((sum,line)=>sum+(line.product.priceMinor+line.addons.reduce((a,x)=>a+x.addon.priceMinor*x.quantity,0))*line.quantity,0),[cart]);
+  useEffect(()=>{
+    if(!cartVisible||mobileEnv.demoMode||!token||!cart.length||!hasDeliveryCoordinates(selectedAddress)){
+      setCartQuote(null);
+      setCartQuoteLoading(false);
+      return;
+    }
+    let active=true;
+    setCartQuoteLoading(true);
+    void api.post<OrderQuote>('/orders/quote',{
+      vendorId:cart[0].vendorId,
+      addressId:selectedAddress.id,
+      items:cart.map(line=>({productId:line.product.id,quantity:line.quantity,addons:line.addons.map(item=>({addonId:item.addon.id,quantity:item.quantity}))})),
+    },token)
+      .then(quote=>{if(active)setCartQuote(quote);})
+      .catch(()=>{if(active)setCartQuote(null);})
+      .finally(()=>{if(active)setCartQuoteLoading(false);});
+    return()=>{active=false;};
+  },[cartVisible,token,cart,selectedAddress]);
   const saveAuthenticatedSession=async(result:Session)=>{if(!result.user.roles.includes('CUSTOMER'))throw new Error('This account does not have customer access.');await SecureStore.setItemAsync('makanza-session',JSON.stringify(result));setSession(result);setPassword('');setNotice('You are signed in.');};
   const signIn=async(emailValue:string,passwordValue:string)=>{setBusy(true);setError('');try{const result=await api.post<Session>('/auth/login',{email:emailValue,password:passwordValue});await saveAuthenticatedSession(result);}catch(e){setError(e instanceof Error?e.message:'Could not sign in.');}finally{setBusy(false);}};
   const beginSignup=async(nameValue:string,emailValue:string,phoneValue:string,passwordValue:string,channel:'sms'|'whatsapp'):Promise<string|null>=>{
@@ -317,7 +338,7 @@ export default function App(){
     setBusy(true);
     setError('');
     try{
-      const order=await api.post<{id:string;totalMinor:number;status:string}>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(line=>({productId:line.product.id,quantity:line.quantity,addons:line.addons.map(item=>({addonId:item.addon.id,quantity:item.quantity}))}))},token!);
+      const order=await api.post<CustomerOrder>('/orders',{vendorId:cart[0].vendorId,addressId:selectedAddress.id,idempotencyKey:makeIdempotencyKey(),items:cart.map(line=>({productId:line.product.id,quantity:line.quantity,addons:line.addons.map(item=>({addonId:item.addon.id,quantity:item.quantity}))}))},token!);
       if(order.status==='CONFIRMED'){
         setCart([]);
         setCartVisible(false);
@@ -327,7 +348,7 @@ export default function App(){
         return;
       }
       setCartVisible(false);
-      setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});
+      setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor,subtotalMinor:order.subtotalMinor,deliveryFeeMinor:order.deliveryFeeMinor,serviceFeeMinor:order.serviceFeeMinor,deliveryDistanceMeters:order.deliveryDistanceMeters});
       setPaymentError('');
       setPaymentPickerVisible(true);
       setNotice('Your order is ready. Choose how you would like to pay.');
@@ -455,8 +476,8 @@ export default function App(){
     {screen==='search'&&<SearchScreen query={query} recentSearches={recentSearches} vendors={vendors} loading={loading&&vendors.length===0} error={error} dark={isDark} onQuery={setQuery} onSearch={(term)=>{const searchTerm=term??query;recordRecentSearch(searchTerm);void loadVendors(searchTerm);}} onRecentSearch={term=>{setQuery(term);recordRecentSearch(term);void loadVendors(term);}} onClearRecent={clearRecentSearches} onOpen={openVendor} onRetry={()=>void loadVendors(query)}/> }
     {screen==='wallet'&&<WalletScreen token={token??null} demoMode={mobileEnv.demoMode} colors={colors} onSignIn={()=>setScreen('profile')} onHistory={()=>setScreen('wallet-activity')}/>}
     {screen==='menu'&&<VendorMenuScreen vendor={activeVendor} products={products} loading={loading&&products.length===0} error={error} dark={isDark} userLocation={homeLocation} favoriteVendor={!!activeVendor&&favoriteVendorIds.includes(activeVendor.id)} favoriteProductIds={favoriteProducts.filter(item=>item.vendor.id===activeVendor?.id).map(item=>item.id)} cartCount={cart.reduce((n,l)=>n+l.quantity,0)} cartTotalMinor={subtotal} onOpenCart={()=>setCartVisible(true)} onBack={goBack} onRetry={()=>activeVendor&&setActiveVendor({...activeVendor})} onAdd={add} onToggleVendorFavorite={()=>activeVendor&&toggleFavorite(activeVendor.id)} onToggleProductFavorite={product=>activeVendor&&toggleProductFavorite(product,activeVendor)}/>}
-    <CartScreen visible={cartVisible} onClose={()=>setCartVisible(false)} lines={cart} subtotal={subtotal} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} demoMode={mobileEnv.demoMode} pendingPayment={!!pendingPaymentOrder} onPickAddress={()=>{setOpenCartAfterAddress(true);setCartVisible(false);setAddressPicker(true);}} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onContinuePayment={()=>{setCartVisible(false);setPaymentError('');setPaymentPickerVisible(true);}} onBrowse={()=>setCartVisible(false)} onSignIn={()=>{setCartVisible(false);setScreen('profile');}}/>
-    {screen==='orders'&&<OrdersScreen orders={orders} loading={loading} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onRetry={()=>token&&void loadOrders(token)} onSignIn={()=>setScreen('profile')} onOpen={order=>{setDetailOrder(order);setScreen('order-detail');}} onCancel={(id,reason,details)=>void cancelCustomerOrder(id,reason,details)} onPayOrder={order=>{setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor});setPaymentError('');setPaymentPickerVisible(true);}}/>}
+    <CartScreen visible={cartVisible} onClose={()=>setCartVisible(false)} lines={cart} subtotal={subtotal} quote={cartQuote} quoteLoading={cartQuoteLoading} address={selectedAddress?`${selectedAddress.line1}, ${selectedAddress.city}`:''} locationLabel={selectedAddress?.label??'Choose a delivery location'} hasPinnedLocation={hasDeliveryCoordinates(selectedAddress)} busy={busy} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} demoMode={mobileEnv.demoMode} pendingPayment={!!pendingPaymentOrder} onPickAddress={()=>{setOpenCartAfterAddress(true);setCartVisible(false);setAddressPicker(true);}} onQuantity={(lineId,delta)=>setCart(lines=>lines.flatMap(line=>line.id===lineId?line.quantity+delta<=0?[]:[{...line,quantity:line.quantity+delta}]:[line]))} onPlaceOrder={()=>void placeOrder()} onContinuePayment={()=>{setCartVisible(false);setPaymentError('');setPaymentPickerVisible(true);}} onBrowse={()=>setCartVisible(false)} onSignIn={()=>{setCartVisible(false);setScreen('profile');}}/>
+    {screen==='orders'&&<OrdersScreen orders={orders} loading={loading} error={error} hasAccount={!!session||mobileEnv.demoMode} dark={isDark} onRetry={()=>token&&void loadOrders(token)} onSignIn={()=>setScreen('profile')} onOpen={order=>{setDetailOrder(order);setScreen('order-detail');}} onCancel={(id,reason,details)=>void cancelCustomerOrder(id,reason,details)} onPayOrder={order=>{setPendingPaymentOrder({id:order.id,totalMinor:order.totalMinor,subtotalMinor:order.subtotalMinor,deliveryFeeMinor:order.deliveryFeeMinor,serviceFeeMinor:order.serviceFeeMinor,deliveryDistanceMeters:order.deliveryDistanceMeters});setPaymentError('');setPaymentPickerVisible(true);}}/>}
     {screen==='notifications'&&<NotificationsScreen items={notificationInbox.items} unreadCount={notificationInbox.unreadCount} loading={notificationsLoading} error={notificationsError} hasAccount={!!session} colors={colors} onRetry={()=>token&&void loadNotifications(token)} onSignIn={()=>setScreen('profile')} onOpen={item=>void openNotification(item)} onReadAll={()=>void markAllNotificationsRead()} onBack={goBack}/>}
     {screen==='order-detail'&&detailOrder&&<OrderDetailScreen order={orders.find(x=>x.id===detailOrder.id)??detailOrder} colors={colors} token={token??null} demoMode={mobileEnv.demoMode} onBack={goBack}/>}
     {screen==='wallet-activity'&&token&&<WalletActivityScreen token={token} colors={colors} onBack={goBack}/>}
@@ -473,7 +494,7 @@ export default function App(){
     {screen==='profile'&&<ProfileScreen session={profileSession} colors={colors} guest={!session} onSignIn={()=>setScreen('profile')} onSignOut={()=>void signOut()} onEdit={()=>setScreen('profile-edit')} onPreferences={()=>setScreen('preferences')} onPassword={()=>setScreen('password')} onAddresses={()=>{setScreen('addresses');setAddressPicker(true);}} onFavorites={()=>setScreen('favorites')} onWallet={()=>setScreen('wallet')} onHelp={()=>setScreen('help')} onAbout={()=>setScreen('about')}/>}
     {primaryTab&&<TabBar active={screen as 'home'|'search'|'orders'|'wallet'|'profile'} dark={isDark} onChange={tab=>{setScreen(tab);if(tab==='orders'&&token)void loadOrders(token);if(tab==='home')void loadVendors();}}/>}
     <AddressPickerModal visible={addressPicker} token={token??null} colors={colors} manageMode={screen==='addresses'} onClose={()=>{setAddressPicker(false);if(openCartAfterAddress){setOpenCartAfterAddress(false);setCartVisible(true);}else if(screen==='addresses')goBack();}} onSelect={place=>{chooseAddress(place);if(openCartAfterAddress){setOpenCartAfterAddress(false);setCartVisible(true);}else if(screen==='addresses')goBack();}} onSignIn={()=>{setAddressPicker(false);setOpenCartAfterAddress(false);setScreen('profile');}}/>
-    {pendingPaymentOrder&&token&&<OrderPaymentModal visible={paymentPickerVisible} token={token} amountMinor={pendingPaymentOrder.totalMinor} busy={busy} error={paymentError} colors={colors} onClose={()=>setPaymentPickerVisible(false)} onPay={method=>void payForOrder(method)}/>}
+    {pendingPaymentOrder&&token&&<OrderPaymentModal visible={paymentPickerVisible} token={token} amountMinor={pendingPaymentOrder.totalMinor} subtotalMinor={pendingPaymentOrder.subtotalMinor} deliveryFeeMinor={pendingPaymentOrder.deliveryFeeMinor} serviceFeeMinor={pendingPaymentOrder.serviceFeeMinor} deliveryDistanceMeters={pendingPaymentOrder.deliveryDistanceMeters} busy={busy} error={paymentError} colors={colors} onClose={()=>setPaymentPickerVisible(false)} onPay={method=>void payForOrder(method)}/>}
     {orderCheckout&&<PaystackCheckoutModal visible authorizationUrl={orderCheckout.authorizationUrl} reference={orderCheckout.reference} colors={colors} subtitle={`Pay for order ${orderCheckout.orderId.slice(-8)}`} confirmationMessage="Your order will be confirmed after Paystack verifies the payment." onClose={closeOrderCheckout} onPaymentReturn={reference=>void handleOrderPaymentReturn(reference)}/>}
     {notice?<View pointerEvents="box-none" accessibilityLiveRegion="polite" style={[toastStyles.position,primaryTab&&toastStyles.aboveTabBar]}>
       <View style={toastStyles.toast}>

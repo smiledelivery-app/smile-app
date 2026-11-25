@@ -10,6 +10,10 @@ type Props={
   visible:boolean;
   token:string;
   amountMinor:number;
+  subtotalMinor?:number;
+  deliveryFeeMinor?:number;
+  serviceFeeMinor?:number;
+  deliveryDistanceMeters?:number|null;
   busy:boolean;
   error:string;
   colors:AppColors;
@@ -18,7 +22,7 @@ type Props={
 };
 const money=(minor:number)=>`₦${(minor/100).toLocaleString('en-NG')}`;
 
-export default function OrderPaymentModal({visible,token,amountMinor,busy,error,colors,onClose,onPay}:Props){
+export default function OrderPaymentModal({visible,token,amountMinor,subtotalMinor,deliveryFeeMinor,serviceFeeMinor,deliveryDistanceMeters,busy,error,colors,onClose,onPay}:Props){
   const [balanceMinor,setBalanceMinor]=useState<number|null>(null);
   const [balanceLoading,setBalanceLoading]=useState(false);
   const [balanceError,setBalanceError]=useState('');
@@ -38,6 +42,7 @@ export default function OrderPaymentModal({visible,token,amountMinor,busy,error,
   },[visible,token]);
 
   const insufficient=balanceMinor!==null&&balanceMinor<amountMinor;
+  const hasBreakdown=subtotalMinor!==undefined&&deliveryFeeMinor!==undefined&&serviceFeeMinor!==undefined;
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <View style={s.overlay}>
       <View style={s.sheet}>
@@ -46,6 +51,12 @@ export default function OrderPaymentModal({visible,token,amountMinor,busy,error,
           <View style={{flex:1}}><Text style={s.title}>Choose payment</Text><Text style={s.subtitle}>Order total · {money(amountMinor)}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Close payment options" onPress={onClose} style={s.close}><Ionicons name="close" size={21} color={colors.muted}/></Pressable>
         </View>
+        {hasBreakdown&&<View style={s.breakdown}>
+          <View style={s.breakdownRow}><Text style={s.breakdownLabel}>Items subtotal</Text><Text style={s.breakdownValue}>{money(subtotalMinor)}</Text></View>
+          <View style={s.breakdownRow}><Text style={s.breakdownLabel}>Rider delivery fee{typeof deliveryDistanceMeters==='number'?` (${(deliveryDistanceMeters/1000).toFixed(1)} km)`:''}</Text><Text style={s.breakdownValue}>{money(deliveryFeeMinor)}</Text></View>
+          <View style={s.breakdownRow}><Text style={s.breakdownLabel}>Service charge</Text><Text style={s.breakdownValue}>{money(serviceFeeMinor)}</Text></View>
+          <View style={[s.breakdownRow,s.breakdownTotal]}><Text style={s.breakdownTotalLabel}>Total due</Text><Text style={s.breakdownTotalValue}>{money(amountMinor)}</Text></View>
+        </View>}
         {balanceLoading?<View style={s.balanceLoading}><ActivityIndicator color={colors.green}/><Text style={s.balanceText}>Checking your wallet balance…</Text></View>
         :<Text style={[s.balanceText,insufficient&&s.warning]}>{balanceMinor===null?balanceError||'Wallet balance unavailable':`Wallet balance · ${money(balanceMinor)}${insufficient?' · Not enough to cover this order':''}`}</Text>}
         {error?<Text accessibilityRole="alert" style={s.error}>{error}</Text>:null}
@@ -75,6 +86,13 @@ const styles=(colors:AppColors)=>{
     title:{fontSize:18,fontWeight:'900',color:c.ink},
     subtitle:{fontSize:11,color:c.muted,marginTop:3},
     close:{width:40,height:40,alignItems:'center',justifyContent:'center',borderRadius:customerRadius.sm,backgroundColor:c.surfaceAlt},
+    breakdown:{padding:12,marginBottom:10,borderRadius:customerRadius.md,backgroundColor:c.surfaceAlt,gap:6},
+    breakdownRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
+    breakdownLabel:{fontSize:11,color:c.muted},
+    breakdownValue:{fontSize:11,fontWeight:'700',color:c.ink},
+    breakdownTotal:{marginTop:4,paddingTop:7,borderTopWidth:1,borderTopColor:c.border},
+    breakdownTotalLabel:{fontSize:12,fontWeight:'900',color:c.ink},
+    breakdownTotalValue:{fontSize:14,fontWeight:'900',color:c.primary},
     balanceLoading:{minHeight:39,flexDirection:'row',alignItems:'center',gap:9},
     balanceText:{fontSize:11,lineHeight:17,color:c.muted,marginBottom:10},
     warning:{color:c.danger},

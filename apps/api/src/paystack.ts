@@ -7,6 +7,7 @@ export type PaystackInitialization={authorizationUrl:string;accessCode:string;re
 export type PaystackVerification={reference:string;amountMinor:number;status:string;metadata:Record<string,unknown>;channel:string|null;customerCode:string|null;accountNumber:string|null};
 export type PaystackBank={name:string;code:string};
 export type PaystackTransfer={reference:string;transferCode:string|null;status:string};
+export type PaystackRefund={id:string|null;status:string;amountMinor:number|null;transactionReference:string|null};
 
 function readString(value:unknown) { return typeof value==='string'?value:null; }
 function readRecord(value:unknown):Record<string,unknown> { return value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{}; }
@@ -82,4 +83,31 @@ export async function createPaystackTransferRecipient(input:{name:string;account
 export async function initiatePaystackTransfer(input:{amountMinor:number;recipientCode:string;reference:string;reason:string},secret:string,fetcher?:typeof fetch):Promise<PaystackTransfer> {
   const data=readRecord(await request<unknown>('/transfer',secret,{method:'POST',body:JSON.stringify({source:'balance',amount:input.amountMinor,recipient:input.recipientCode,reference:input.reference,reason:input.reason,currency:'NGN'})},fetcher));
   return {reference:readString(data.reference)??input.reference,transferCode:readString(data.transfer_code),status:readString(data.status)??'pending'};
+}
+
+/** Initiates a Paystack refund for a settled transaction reference. */
+export async function createPaystackRefund(
+  input: { transactionReference: string; amountMinor?: number; merchantNote?: string },
+  secret: string,
+  fetcher?: typeof fetch,
+): Promise<PaystackRefund> {
+  const payload: Record<string, unknown> = { transaction: input.transactionReference };
+  if (input.amountMinor !== undefined) {
+    if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 1) {
+      throw new PaystackError('Refund amount must be a positive integer in minor units.');
+    }
+    payload.amount = input.amountMinor;
+  }
+  if (input.merchantNote) payload.merchant_note = input.merchantNote;
+  const data = readRecord(await request<unknown>('/refund', secret, { method: 'POST', body: JSON.stringify(payload) }, fetcher));
+  const transaction = readRecord(data.transaction);
+  const id = typeof data.id === 'string' || typeof data.id === 'number' ? String(data.id) : null;
+  const rawAmount = data.amount;
+  const amountMinor = typeof rawAmount === 'number' && Number.isSafeInteger(rawAmount) ? rawAmount : null;
+  return {
+    id,
+    status: (readString(data.status) ?? 'pending').toLowerCase(),
+    amountMinor,
+    transactionReference: readString(transaction.reference) ?? readString(data.transaction_reference) ?? input.transactionReference,
+  };
 }

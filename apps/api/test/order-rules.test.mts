@@ -5,7 +5,7 @@ import { calculateOrderAmounts, canVendorTransition } from '../src/order-rules.t
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from '../src/catalog-rules.ts';
 import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from '../src/dispatch-rules.ts';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from '../src/google-maps.ts';
-import { createProofCode } from '../src/proof-codes.ts';
+import { createProofCode, proofSubject } from '../src/proof-codes.ts';
 import { initializePaystackTransaction, verifyPaystackSignature } from '../src/paystack.ts';
 
 test('vendor order transitions allow only the intended forward steps',()=>{
@@ -18,7 +18,7 @@ test('vendor order transitions allow only the intended forward steps',()=>{
 });
 
 test('checkout uses integer minor units and calculates totals without floats',()=>{
-  assert.deepEqual(calculateOrderAmounts([{priceMinor:450_000,quantity:2},{priceMinor:125_000,quantity:1}],80_000),{subtotalMinor:1_025_000,totalMinor:1_105_000});
+  assert.deepEqual(calculateOrderAmounts([{priceMinor:450_000,quantity:2},{priceMinor:125_000,quantity:1}],80_000),{subtotalMinor:1_025_000,deliveryFeeMinor:80_000,serviceFeeMinor:50_000,totalMinor:1_155_000});
 });
 
 test('checkout rejects invalid lines and totals outside the database integer range',()=>{
@@ -27,7 +27,7 @@ test('checkout rejects invalid lines and totals outside the database integer ran
 });
 
 test('checkout multiplies per-item addon quantities and menu item quantities in integer minor units',()=>{
-  assert.deepEqual(calculateOrderAmounts([{priceMinor:50_000,quantity:2,addons:[{priceMinor:50_000,quantity:2}]}],80_000),{subtotalMinor:300_000,totalMinor:380_000});
+  assert.deepEqual(calculateOrderAmounts([{priceMinor:50_000,quantity:2,addons:[{priceMinor:50_000,quantity:2}]}],80_000),{subtotalMinor:300_000,deliveryFeeMinor:80_000,serviceFeeMinor:50_000,totalMinor:430_000});
   assert.throws(()=>calculateOrderAmounts([{priceMinor:50_000,quantity:1,addons:[{priceMinor:0,quantity:1}]}],80),RangeError);
 });
 
@@ -72,12 +72,15 @@ test('road distance ranking uses route distances, excludes unreachable or over-r
   assert.deepEqual(ranked,[{id:'b',pickupDistanceKm:2.4}]);
 });
 
-test('vendor pickup and customer delivery proof codes are stable per delivery and purpose-separated',()=>{
-  const pickup=createProofCode('server-secret','vendor-pickup','delivery-123');
-  const customer=createProofCode('server-secret','customer-delivery','delivery-123');
+test('vendor pickup and customer delivery proof codes are stable per delivery+rider and purpose-separated',()=>{
+  const subject=proofSubject('delivery-123','rider-456');
+  const pickup=createProofCode('server-secret','vendor-pickup',subject);
+  const customer=createProofCode('server-secret','customer-delivery',subject);
   assert.match(pickup,/^\d{6}$/);assert.match(customer,/^\d{6}$/);
-  assert.equal(pickup,createProofCode('server-secret','vendor-pickup','delivery-123'));
+  assert.equal(pickup,createProofCode('server-secret','vendor-pickup',subject));
   assert.notEqual(pickup,customer);
+  assert.notEqual(pickup,createProofCode('server-secret','vendor-pickup',proofSubject('delivery-123','rider-789')));
+  assert.notEqual(customer,createProofCode('server-secret','customer-delivery',proofSubject('delivery-123','rider-789')));
 });
 
 test('Google Routes matrix adapter requests only fields it consumes and maps rider origin indexes',async()=>{

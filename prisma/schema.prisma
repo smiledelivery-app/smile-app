@@ -248,6 +248,8 @@ model Order {
   status OrderStatus @default(PENDING_PAYMENT)
   subtotalMinor Int
   deliveryFeeMinor Int
+  serviceFeeMinor Int @default(0)
+  deliveryDistanceMeters Int?
   totalMinor Int
   idempotencyKey String @unique
   addressId String?

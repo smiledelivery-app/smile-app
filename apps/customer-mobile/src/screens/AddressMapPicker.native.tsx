@@ -1,6 +1,4 @@
 import { AppText as Text } from '@makanza/mobile-ui';
-import { isRunningInExpoGo } from 'expo';
-import MapView, { Marker, type MapPressEvent, type Region } from 'react-native-maps';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
@@ -9,13 +7,6 @@ import { customerPalette, customerRadius } from '../theme/customer';
 
 type Coordinate = { latitude: number; longitude: number };
 type Props = { point: Coordinate | null; colors: AppColors; onPick: (point: Coordinate) => void };
-
-const nigeriaRegion: Region = {
-  latitude: 9.082,
-  longitude: 8.6753,
-  latitudeDelta: 9.8,
-  longitudeDelta: 12.2,
-};
 
 const leafletMapHtml = `<!doctype html>
 <html>
@@ -72,20 +63,16 @@ const setWebMapPin = (point: Coordinate) =>
 
 export default function AddressMapPicker({ point, colors, onPick }: Props) {
   const palette = customerPalette(colors);
-  const map = useRef<MapView>(null);
   const webMap = useRef<WebView>(null);
   const pointRef = useRef(point);
   pointRef.current = point;
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
-  const expoGo = isRunningInExpoGo();
-  const initialRegion = point ? { ...point, latitudeDelta: 0.025, longitudeDelta: 0.025 } : nigeriaRegion;
-  const choosePoint = (event: MapPressEvent) => onPick(event.nativeEvent.coordinate);
+
   useEffect(() => {
-    if (!point) return;
-    if (expoGo) webMap.current?.injectJavaScript(setWebMapPin(point));
-    else map.current?.animateToRegion({ ...point, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 250);
-  }, [expoGo, point?.latitude, point?.longitude]);
+    if (!point || !mapReady) return;
+    webMap.current?.injectJavaScript(setWebMapPin(point));
+  }, [mapReady, point?.latitude, point?.longitude]);
 
   const handleWebMessage = (event: WebViewMessageEvent) => {
     let message: { type?: string; latitude?: number; longitude?: number };
@@ -99,57 +86,84 @@ export default function AddressMapPicker({ point, colors, onPick }: Props) {
       setMapReady(true);
       setMapError(false);
       if (pointRef.current) webMap.current?.injectJavaScript(setWebMapPin(pointRef.current));
-    } else if (message.type === 'pick'
-      && typeof message.latitude === 'number'
-      && Number.isFinite(message.latitude)
-      && typeof message.longitude === 'number'
-      && Number.isFinite(message.longitude)) {
+    } else if (
+      message.type === 'pick' &&
+      typeof message.latitude === 'number' &&
+      Number.isFinite(message.latitude) &&
+      typeof message.longitude === 'number' &&
+      Number.isFinite(message.longitude)
+    ) {
       onPick({ latitude: message.latitude, longitude: message.longitude });
     } else if (message.type === 'error') {
       setMapError(true);
     }
   };
 
-  return <View style={[styles.frame, { borderColor: palette.border }]}>
-    {expoGo
-      ? <WebView
-          ref={webMap}
-          style={styles.map}
-          source={{ html: leafletMapHtml }}
-          originWhitelist={['*']}
-          javaScriptEnabled
-          onMessage={handleWebMessage}
-          onError={() => setMapError(true)}
-        />
-      : <MapView
-          ref={map}
-          style={styles.map}
-          initialRegion={initialRegion}
-          onPress={choosePoint}
-          onMapReady={() => setMapReady(true)}
-          loadingEnabled
-          showsCompass
-          toolbarEnabled={false}
-        >
-          {point && <Marker coordinate={point} title="Delivery location" pinColor={palette.primary} />}
-        </MapView>}
-    {!mapReady && !mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
-      <ActivityIndicator color={palette.primary}/>
-      <Text style={[styles.hintText, { color: palette.ink }]}>Loading map…</Text>
-    </View>}
-    {mapError && <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
-      <Text style={[styles.hintText, { color: palette.ink }]}>Map could not load. Check your internet connection.</Text>
-    </View>}
-    {mapReady && !mapError && !point && <View pointerEvents="none" style={[styles.hint, { backgroundColor: palette.surface }]}>
-      <Text style={[styles.hintText, { color: palette.ink }]}>Tap the map to pin your delivery location</Text>
-    </View>}
-  </View>;
+  return (
+    <View style={[styles.frame, { borderColor: palette.border }]}>
+      <WebView
+        ref={webMap}
+        style={styles.map}
+        source={{ html: leafletMapHtml }}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        onMessage={handleWebMessage}
+        onError={() => setMapError(true)}
+      />
+      {!mapReady && !mapError && (
+        <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
+          <ActivityIndicator color={palette.primary} />
+          <Text style={[styles.hintText, { color: palette.ink }]}>Loading map…</Text>
+        </View>
+      )}
+      {mapError && (
+        <View pointerEvents="none" style={[styles.mapLoading, { backgroundColor: palette.surface }]}>
+          <Text style={[styles.hintText, { color: palette.ink }]}>
+            Map could not load. Check your internet connection.
+          </Text>
+        </View>
+      )}
+      {mapReady && !mapError && !point && (
+        <View pointerEvents="none" style={[styles.hint, { backgroundColor: palette.surface }]}>
+          <Text style={[styles.hintText, { color: palette.ink }]}>
+            Tap the map to pin your delivery location
+          </Text>
+        </View>
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  frame: { height: 310, overflow: 'hidden', borderWidth: 1, borderRadius: customerRadius.lg, marginTop: 10, backgroundColor: '#e8ede8' },
+  frame: {
+    height: 310,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderRadius: customerRadius.lg,
+    marginTop: 10,
+    backgroundColor: '#e8ede8',
+  },
   map: { width: '100%', height: '100%' },
-  hint: { position: 'absolute', top: 12, left: 12, right: 12, alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 11, opacity: .96 },
-  mapLoading: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  hint: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 11,
+    opacity: 0.96,
+  },
+  mapLoading: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
   hintText: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
 });

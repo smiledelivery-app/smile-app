@@ -1,7 +1,7 @@
 import {
   ArrowDownLeft, ArrowRight, ArrowUpRight, Bike, Bell, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight,
   CircleAlert, CircleCheckBig, CircleHelp, CircleUserRound, Clock3, CreditCard,
-  Eye, EyeOff, House, Info, Languages, LockKeyhole, LogIn, LogOut,
+  Eye, EyeOff, History, House, Info, Languages, LockKeyhole, LogIn, LogOut,
   Mail, Map, MapPin, Moon, Navigation, Pencil, Phone, Plus, ReceiptText,
   RefreshCw, Search, Settings, ShieldCheck, ShoppingBag, Store, Sun, Trash2, UserRound, Star,
   TriangleAlert, Utensils, WalletCards, X, Zap, CircleDot, ImagePlus, MessageCircle, type LucideIcon,
@@ -22,7 +22,7 @@ const icons:Record<string,LucideIcon>={
   'shield-checkmark-outline':ShieldCheck,'trash-outline':Trash2,'eye-outline':Eye,'eye-off-outline':EyeOff,
   'refresh-outline':RefreshCw,'restaurant-outline':Utensils,'language-outline':Languages,
   'bag-handle-outline':ShoppingBag,'checkmark':Check,'checkmark-circle-outline':CircleCheckBig,'checkmark-done-outline':CircleCheckBig,
-  'alert-circle-outline':CircleAlert,'close-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,'logo-whatsapp':MessageCircle,'megaphone-outline':Bell,
+  'alert-circle-outline':CircleAlert,'close-circle-outline':CircleAlert,'warning-outline':TriangleAlert,'chatbubble-outline':Phone,'logo-whatsapp':MessageCircle,'megaphone-outline':Bell,history:History,
 };
 
 export function AppIcon({name,size=24,color,strokeWidth=2.2}:Props){const Icon=icons[name]??CircleDot;return <Icon size={size} color={color} strokeWidth={strokeWidth}/>;}

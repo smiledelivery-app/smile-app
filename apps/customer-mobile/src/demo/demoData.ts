@@ -48,14 +48,14 @@ const demoTracking:OrderTracking={deliveryId:'demo-delivery-1042',deliveryStatus
 
 export const demoOrders: CustomerOrder[] = [
   {
-    id: 'demo-order-1042', displayNumber: 1042, status: 'PICKED_UP', totalMinor: 620000, createdAt: demoDate(1),
+    id: 'demo-order-1042', displayNumber: 1042, status: 'PICKED_UP', subtotalMinor: 530000, deliveryFeeMinor: 50000, serviceFeeMinor: 50000, deliveryDistanceMeters: 820, totalMinor: 630000, createdAt: demoDate(1),
     tracking:demoTracking,
     vendor: { name: 'Ada’s Kitchen' }, delivery: { status: 'PICKED_UP', assignedAt: demoDate(0.5), riderName: 'Tunde A.' }, deliveryCode: '284613',
     items: [{ id: 'demo-line-1', nameSnapshot: 'Smoky party jollof', quantity: 1, unitPriceMinor: 380000, addons: [{ id: 'demo-line-addon-1', nameSnapshot: 'Grilled chicken', quantity: 1, unitPriceMinor: 150000 }] }],
     events: [{ id: 'demo-event-1', status: 'CONFIRMED', createdAt: demoDate(1) }, { id: 'demo-event-2', status: 'PREPARING', createdAt: demoDate(0.8) }, { id: 'demo-event-3', status: 'PICKED_UP', createdAt: demoDate(0.5) }],
   },
   {
-    id: 'demo-order-1038', displayNumber: 1038, status: 'DELIVERED', totalMinor: 590000, createdAt: demoDate(26),
+    id: 'demo-order-1038', displayNumber: 1038, status: 'DELIVERED', subtotalMinor: 520000, deliveryFeeMinor: 55000, serviceFeeMinor: 50000, deliveryDistanceMeters: 1850, totalMinor: 625000, createdAt: demoDate(26),
     vendor: { name: 'Green Bowl' }, delivery: { status: 'COMPLETED', assignedAt: demoDate(25.5), riderName: 'Mariam K.' },
     items: [{ id: 'demo-line-2', nameSnapshot: 'Lagos crunch bowl', quantity: 1, unitPriceMinor: 520000 }],
     events: [{ id: 'demo-event-4', status: 'CONFIRMED', createdAt: demoDate(26) }, { id: 'demo-event-5', status: 'DELIVERED', createdAt: demoDate(25) }],

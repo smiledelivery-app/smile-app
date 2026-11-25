@@ -7,7 +7,21 @@ import { api } from '../services/api';
 import type { AppColors } from '../theme/colors';
 import { customerPalette, customerRadius, customerSpace } from '../theme/customer';
 
-type Transaction={id:string;amountMinor:number;status:string;provider:string;isDemo:boolean;createdAt:string;order:{id:string;vendor:{name:string}}};
+import { formatOrderNumber } from '../utils/format';
+
+type Transaction={
+  id:string;
+  amountMinor:number;
+  status:string;
+  provider:string;
+  direction?:'CREDIT'|'DEBIT';
+  type?:string;
+  title?:string;
+  subtitle?:string|null;
+  isDemo:boolean;
+  createdAt:string;
+  order?:{id?:string|null;displayNumber?:number|null;vendor?:{name?:string|null}|null}|null;
+};
 
 export default function WalletActivityScreen({token,colors:c,onBack}:{token:string;colors:AppColors;onBack:()=>void}){
   const [rows,setRows]=useState<Transaction[]>([]);
@@ -32,11 +46,16 @@ export default function WalletActivityScreen({token,colors:c,onBack}:{token:stri
       :rows.length===0?<View style={s.state}><View style={s.stateIcon}><Ionicons name="receipt-outline" size={22} color={p.primary}/></View><Text style={s.emptyTitle}>No activity yet</Text><Text style={s.body}>Order charges and refunds will appear here when available.</Text></View>
       :rows.map(row=>{
         const status=row.status.toUpperCase();
-        const successful=['SUCCEEDED','SUCCESS'].includes(status);
-        const pending=status==='PENDING';
+        const successful=['SUCCEEDED','SUCCESS','REFUNDED'].includes(status);
+        const pending=status==='PENDING'||status==='REFUND_PENDING';
         const statusColor=successful?p.primary:pending?p.warning:p.danger;
+        const incoming=row.direction?row.direction==='CREDIT':status==='REFUNDED'||row.type==='TOPUP';
+        const title=row.title??row.order?.vendor?.name??(row.type==='TOPUP'?'Wallet top-up':'Smile wallet');
+        const orderId=row.order?.id??null;
+        const subtitle=orderId?`Order ${formatOrderNumber(row.order?.displayNumber,orderId)}`:(row.subtitle??row.provider.replace(/_/g,' '));
+        const prefix=status==='FAILED'?'':incoming?'+':'−';
         return <View key={row.id} style={s.card}>
-          <View style={s.cardTop}><View style={[s.transactionIcon,{backgroundColor:successful?p.primarySoft:pending?p.accentSoft:p.accentSoft}]}><Ionicons name={successful?'checkmark':pending?'time-outline':'close'} size={18} color={statusColor}/></View><View style={s.copy}><Text numberOfLines={1} style={s.vendor}>{row.order.vendor.name}</Text><Text style={s.meta}>Order {row.order.id.slice(-8)} · {new Date(row.createdAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</Text></View><Text style={s.amount}>₦{(row.amountMinor/100).toLocaleString('en-NG')}</Text></View>
+          <View style={s.cardTop}><View style={[s.transactionIcon,{backgroundColor:successful?p.primarySoft:p.accentSoft}]}><Ionicons name={successful?'checkmark':pending?'time-outline':'close'} size={18} color={statusColor}/></View><View style={s.copy}><Text numberOfLines={1} style={s.vendor}>{title}</Text><Text style={s.meta}>{subtitle} · {new Date(row.createdAt).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'})}</Text></View><Text style={[s.amount,incoming&&{color:p.primary}]}>{prefix}₦{(row.amountMinor/100).toLocaleString('en-NG')}</Text></View>
           <View style={s.cardBottom}><Text style={[s.status,{color:statusColor}]}>{status.replace(/_/g,' ')}</Text>{row.isDemo&&<Text style={s.demo}>DEMO · NO REAL CHARGE</Text>}</View>
         </View>;
       })}
