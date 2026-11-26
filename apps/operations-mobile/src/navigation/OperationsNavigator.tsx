@@ -71,6 +71,7 @@ export default function App(){
   const [loading,setLoading]=useState(false);const [busy,setBusy]=useState('');const [error,setError]=useState('');const [notice,setNotice]=useState('');const [locationMessage,setLocationMessage]=useState('');
   const [locationSharing,setLocationSharing]=useState(false);
   const [locationPermissionNeeded,setLocationPermissionNeeded]=useState(false);
+  const [appIsActive,setAppIsActive]=useState(AppState.currentState==='active');
   const locationSubscription=useRef<Location.LocationSubscription|null>(null);
   const c=colorMode==='dark'?darkColors:lightColors;
   const s=createStyles(c);
@@ -188,24 +189,17 @@ export default function App(){
     return()=>{active=false;};
   },[loadRiderData,loadVendorOrders,restoreAttempt]);
 
-  // Location updates are foreground only. Going to the background stops the watcher;
-  // an online rider is also marked offline until they explicitly resume in the app.
   useEffect(()=>{
     const subscription=AppState.addEventListener('change',next=>{
-      if(next!=='active'){
-        stopLocationUpdates();
-        if(token&&riderProfile?.available){
-          void api.put<{available:boolean}>('/rider/availability',{available:false},token).catch(()=>undefined);
-          setRiderProfile(profile=>profile?{...profile,available:false}:profile);
-          setNotice('Location sharing stopped in the background. You are offline; go online again when ready.');
-        }
-      }
+      const active=next==='active';
+      setAppIsActive(active);
+      if(!active)stopLocationUpdates();
     });
     return()=>subscription.remove();
-  },[riderProfile?.available,stopLocationUpdates,token]);
+  },[stopLocationUpdates]);
 
   useEffect(()=>{
-    if(role!=='RIDER'||!token||riderProfile?.status!=='APPROVED'||!riderAutoRefresh)return;
+    if(role!=='RIDER'||!token||!riderAutoRefresh)return;
     const timer=setInterval(()=>{if(AppState.currentState==='active')void loadRiderData(token,true);},20000);
     return()=>clearInterval(timer);
   },[role,token,riderProfile?.status,riderProfile?.available,riderAutoRefresh,loadRiderData]);
@@ -271,7 +265,7 @@ export default function App(){
     finally{setBusy('');}
   };
 
-  const startForegroundLocation=async()=>{
+  const startForegroundLocation=useCallback(async()=>{
     if(!token)throw new Error('Sign in again before sharing location.');
     const permission=await Location.requestForegroundPermissionsAsync();
     if(permission.status!=='granted'){setLocationPermissionNeeded(true);throw new Error('Location permission is required for rider offers. Enable it in device settings.');}
@@ -285,7 +279,16 @@ export default function App(){
     });
     setLocationSharing(true);
     setLocationMessage(`Updated ${new Date().toLocaleTimeString()}`);
-  };
+  },[token]);
+
+  useEffect(()=>{
+    if(!appIsActive||role!=='RIDER'||!token||!riderProfile||riderProfile.status!=='APPROVED'||!riderProfile.available||locationSharing)return;
+    let active=true;
+    void startForegroundLocation().catch(error=>{
+      if(active)setLocationMessage(error instanceof Error?error.message:'Could not share your location for rider offers.');
+    });
+    return()=>{active=false;};
+  },[appIsActive,locationSharing,role,token,riderProfile?.available,riderProfile?.status,startForegroundLocation]);
 
   const setAvailability=async(available:boolean)=>{
     if(!token)return;
@@ -325,7 +328,7 @@ export default function App(){
     try{
       await api.post(`/rider/deliveries/${encodeURIComponent(delivery.id)}/complete`,{code},token);
       setCompletionCodes(current=>({...current,[delivery.id]:''}));setNotice('Delivery complete. The customer’s code was verified by the server.');
-      try{await startForegroundLocation();}catch(e){setLocationMessage(e instanceof Error?e.message:'Could not resume foreground location sharing.');await api.put('/rider/availability',{available:false},token).catch(()=>undefined);setRiderProfile(profile=>profile?{...profile,available:false}:profile);}
+      try{await startForegroundLocation();}catch(e){setLocationMessage(e instanceof Error?e.message:'Could not resume foreground location sharing.');}
       await loadRiderData(token);
     }catch(e){setError(e instanceof Error?e.message:'Delivery could not be completed. Check the code and delivery state.');}
     finally{setBusy('');}

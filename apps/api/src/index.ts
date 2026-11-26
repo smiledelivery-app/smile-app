@@ -997,8 +997,12 @@ app.put('/api/v1/rider/availability',requireUser,requireRole(Role.RIDER),async(r
       const location=await prisma.riderLocation.findUnique({where:{riderId:profile.id}});
       if(!location||location.updatedAt<new Date(Date.now()-10*60_000))return res.status(409).json({error:{code:'LOCATION_REQUIRED',message:'Send a recent location before going online.'}});
     }
-    const data=await prisma.riderProfile.update({where:{id:profile.id},data:{available:input.data.available}});
-    if(data.available)await dispatchWaitingDeliveries();
+    const data=await prisma.$transaction(async tx=>{
+      const updated=await tx.riderProfile.update({where:{id:profile.id},data:{available:input.data.available}});
+      if(!input.data.available)await tx.riderOffer.updateMany({where:{riderId:profile.id,status:RiderOfferStatus.PENDING},data:{status:RiderOfferStatus.EXPIRED}});
+      return updated;
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    await dispatchWaitingDeliveries();
     return res.json({data:{available:data.available}});
   }catch(error){return next(error);}
 });
@@ -1024,7 +1028,7 @@ app.get('/api/v1/rider/offers',requireUser,requireRole(Role.RIDER),async(req:Aut
     await expireAndRedispatchOffers();
     const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId},include:{location:true}});
     if(!rider||rider.status!==VendorStatus.APPROVED)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'An approved, active rider profile is required.'}});
-    if(await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER){await prisma.riderProfile.update({where:{id:rider.id},data:{available:false}});return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot receive more delivery offers until tomorrow.'}});}
+    if(await cancellationCount(req.auth!.userId)>=cancellationLimits.RIDER)return res.status(429).json({error:{code:'DAILY_CANCELLATION_LIMIT',message:'You reached today’s cancellation limit and cannot receive more delivery offers until tomorrow.'}});
     const offers=await prisma.riderOffer.findMany({where:{riderId:rider.id,status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}},include:{delivery:{include:{order:{include:{vendor:true,address:{select:{city:true}},items:true}}}}},orderBy:{createdAt:'asc'},take:20});
     const data=offers.map(offer=>{const order=offer.delivery.order;const pickup=order.vendor.latitude!==null&&order.vendor.longitude!==null&&rider.location?distanceKm(Number(rider.location.latitude),Number(rider.location.longitude),Number(order.vendor.latitude),Number(order.vendor.longitude)):null;const pickupDistanceKm=offer.pickupDistanceMeters===null?pickup:Number(offer.pickupDistanceMeters/1000);return{id:offer.id,expiresAt:offer.expiresAt,deliveryId:offer.deliveryId,pickupDistanceKm:pickupDistanceKm===null?null:Number(pickupDistanceKm.toFixed(1)),deliveryFeeMinor:order.deliveryFeeMinor,deliveryDistanceMeters:order.deliveryDistanceMeters,vendor:{name:order.vendor.name,address:order.vendor.address},dropoffCity:order.address?.city??'Delivery area',itemCount:order.items.reduce((count,item)=>count+item.quantity,0),totalMinor:order.totalMinor};});
     return res.json({data});
@@ -1045,7 +1049,6 @@ app.post('/api/v1/rider/offers/:offerId/accept',requireUser,requireRole(Role.RID
       const related=await tx.delivery.findUniqueOrThrow({where:{id:offer.deliveryId},include:{order:true}});
       const changed=await tx.order.updateMany({where:{id:related.orderId,status:OrderStatus.READY_FOR_PICKUP},data:{status:OrderStatus.RIDER_ASSIGNED}});if(changed.count!==1)throw new Error('ORDER_STATE_CONFLICT');
       await tx.orderStatusEvent.create({data:{orderId:related.orderId,status:OrderStatus.RIDER_ASSIGNED,actorId:req.auth!.userId}});
-      await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
       return tx.delivery.findUnique({where:{id:offer.deliveryId},include:{order:{select:{id:true,status:true}},assignedRider:{include:{user:{select:{name:true}}}}}});
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     if(delivery){
@@ -1090,7 +1093,38 @@ app.get('/api/v1/rider/deliveries/:deliveryId/route',requireUser,requireRole(Rol
 });
 app.post('/api/v1/rider/deliveries/:deliveryId/complete',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   const input=z.object({code:z.string().regex(/^\d{6}$/)}).safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_DELIVERY_CODE',message:'Enter the 6 digit code from the customer.'}});
-  try{const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});const expected=Buffer.from(deliveryOtp(delivery.id,rider.id));const provided=Buffer.from(input.data.code);if(!timingSafeEqual(expected,provided)){const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});}await prisma.$transaction(async tx=>{const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,deliveryFeeMinor:true,deliveryDistanceMeters:true,isDemo:true,vendor:{select:{ownerId:true}}}});if(!order.isDemo){if(order.subtotalMinor>0)await creditWalletInTx(tx,{userId:order.vendor.ownerId,amountMinor:order.subtotalMinor,reference:`vendor_sale_${order.id}`,type:'ORDER_EARNING',orderId:order.id,metadata:{basis:'delivered_item_subtotal'}});if(order.deliveryFeeMinor>0)await creditWalletInTx(tx,{userId:rider.userId,amountMinor:order.deliveryFeeMinor,reference:`rider_delivery_${order.id}`,type:'DELIVERY_EARNING',orderId:order.id,metadata:{basis:'delivered_delivery_fee',distanceMeters:order.deliveryDistanceMeters}});}await tx.riderProfile.update({where:{id:rider.id},data:{available:true}});},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});emitOrderStatusNotification(delivery.orderId,OrderStatus.DELIVERED);return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});}catch(error){if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});return next(error);}
+  try{
+    const rider=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});
+    if(!rider)return res.status(403).json({error:{code:'RIDER_NOT_APPROVED',message:'Rider profile required.'}});
+    const delivery=await prisma.delivery.findFirst({where:{id:routeParam(req,'deliveryId'),assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP}});
+    if(!delivery)return res.status(409).json({error:{code:'INVALID_DELIVERY_STATE',message:'This delivery is not assigned to you or has not been picked up.'}});
+    if(delivery.proofAttempts>=5)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});
+    const expected=Buffer.from(deliveryOtp(delivery.id,rider.id));
+    const provided=Buffer.from(input.data.code);
+    if(!timingSafeEqual(expected,provided)){
+      const attempt=await prisma.delivery.updateMany({where:{id:delivery.id,proofAttempts:{lt:5}},data:{proofAttempts:{increment:1}}});
+      if(!attempt.count)return res.status(429).json({error:{code:'DELIVERY_PROOF_LOCKED',message:'Too many incorrect codes. Contact support.'}});
+      return res.status(403).json({error:{code:'INVALID_DELIVERY_CODE',message:'That delivery code does not match.'}});
+    }
+    await prisma.$transaction(async tx=>{
+      const changed=await tx.delivery.updateMany({where:{id:delivery.id,assignedRiderId:rider.id,status:DeliveryStatus.PICKED_UP},data:{status:DeliveryStatus.DELIVERED,deliveredAt:new Date()}});
+      if(!changed.count)throw new Error('DELIVERY_STATE_CONFLICT');
+      await tx.order.update({where:{id:delivery.orderId},data:{status:OrderStatus.DELIVERED}});
+      await tx.orderStatusEvent.create({data:{orderId:delivery.orderId,status:OrderStatus.DELIVERED,actorId:req.auth!.userId}});
+      const order=await tx.order.findUniqueOrThrow({where:{id:delivery.orderId},select:{id:true,subtotalMinor:true,deliveryFeeMinor:true,deliveryDistanceMeters:true,isDemo:true,vendor:{select:{ownerId:true}}}});
+      if(!order.isDemo){
+        if(order.subtotalMinor>0)await creditWalletInTx(tx,{userId:order.vendor.ownerId,amountMinor:order.subtotalMinor,reference:`vendor_sale_${order.id}`,type:'ORDER_EARNING',orderId:order.id,metadata:{basis:'delivered_item_subtotal'}});
+        if(order.deliveryFeeMinor>0)await creditWalletInTx(tx,{userId:rider.userId,amountMinor:order.deliveryFeeMinor,reference:`rider_delivery_${order.id}`,type:'DELIVERY_EARNING',orderId:order.id,metadata:{basis:'delivered_delivery_fee',distanceMeters:order.deliveryDistanceMeters}});
+      }
+    },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    if(rider.available)await dispatchWaitingDeliveries();
+    emitOrderStatusNotification(delivery.orderId,OrderStatus.DELIVERED);
+    return res.json({data:{id:delivery.id,status:DeliveryStatus.DELIVERED}});
+  }catch(error){
+    if(error instanceof Error&&error.message==='DELIVERY_STATE_CONFLICT')return res.status(409).json({error:{code:error.message,message:'The delivery status changed. Refresh and try again.'}});
+    if(error instanceof Error&&error.message.includes('DELIVERY_OTP_SECRET'))return res.status(503).json({error:{code:'DELIVERY_PROOF_UNAVAILABLE',message:'Delivery proof is not configured.'}});
+    return next(error);
+  }
 });
 
 app.get('/api/v1/notifications',requireUser,async(req:AuthRequest,res,next)=>{
@@ -1675,10 +1709,9 @@ async function cancelOrderForRole(orderId:string,userId:string,role:Cancellation
       await tx.riderOffer.updateMany({where:{deliveryId:order.delivery.id,status:RiderOfferStatus.PENDING},data:{status:RiderOfferStatus.EXPIRED}});
     }
     await tx.orderStatusEvent.create({data:{orderId:order.id,status:OrderStatus.CANCELLED,actorId:userId,note:cancellationNote(reason,details)}});
-    if(role==='RIDER'&&rider)await tx.riderProfile.update({where:{id:rider.id},data:{available:false}});
-    else if(order.delivery?.assignedRiderId)await tx.riderProfile.updateMany({where:{id:order.delivery.assignedRiderId},data:{available:true}});
     return refundPaidOrderInTx(tx,{orderId:order.id,customerId:order.customerId,actorId:userId,reason:cancellationNote(reason,details)});
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  if(order.delivery)await dispatchWaitingDeliveries();
   emitOrderStatusNotification(order.id,OrderStatus.CANCELLED,order.delivery?.assignedRider?.userId);
   let finalStatus:OrderStatus=OrderStatus.CANCELLED;
   if(refundOutcome.kind==='wallet'){
@@ -2042,10 +2075,12 @@ app.patch('/api/v1/admin/riders/:riderId/status',requireUser,requireAdminPermiss
   try{
     const data=await prisma.$transaction(async tx=>{
       const previous=await tx.riderProfile.findUniqueOrThrow({where:{id:riderId},select:{status:true,available:true,user:{select:{isDemo:true}}}});
-      const rider=await tx.riderProfile.update({where:{id:riderId},data:{status:input.data.status,available:false},select:{id:true,status:true,vehicleType:true,serviceArea:true}});
-      await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'RIDER_STATUS_CHANGED',targetType:'RiderProfile',targetId:rider.id,metadata:{previous:{status:previous.status,available:previous.available},next:{status:rider.status,available:false},reason:input.data.reason},isDemo:previous.user.isDemo}});
+      const available=input.data.status===VendorStatus.APPROVED&&(previous.status===VendorStatus.APPROVED?previous.available:true);
+      const rider=await tx.riderProfile.update({where:{id:riderId},data:{status:input.data.status,available},select:{id:true,status:true,vehicleType:true,serviceArea:true}});
+      await tx.auditLog.create({data:{actorId:req.auth!.userId,action:'RIDER_STATUS_CHANGED',targetType:'RiderProfile',targetId:rider.id,metadata:{previous:{status:previous.status,available:previous.available},next:{status:rider.status,available},reason:input.data.reason},isDemo:previous.user.isDemo}});
       return rider;
     });
+    if(data.status===VendorStatus.APPROVED)await dispatchWaitingDeliveries();
     return res.json({data});
   }catch(error){if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2025')return res.status(404).json({error:{code:'RIDER_NOT_FOUND',message:'Rider application not found.'}});return next(error);}
 });

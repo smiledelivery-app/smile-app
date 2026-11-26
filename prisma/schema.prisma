@@ -380,7 +380,7 @@ model RiderProfile {
   id String @id @default(cuid())
   userId String @unique
   status VendorStatus @default(DRAFT)
-  available Boolean @default(false)
+  available Boolean @default(true)
   vehicleType String?
   dateOfBirth DateTime?
   ninCiphertext String?
