@@ -32,6 +32,8 @@ export default function VendorWalletScreen({token,colors:c,role='VENDOR'}:{token
   const retryDva=async()=>{setDvaRetryBusy(true);setDvaRetryError('');try{await api.post('/wallet/dva/retry',{},token);await load(true);}catch(e){setDvaRetryError(e instanceof Error?e.message:'Could not retry dedicated account setup.');}finally{setDvaRetryBusy(false);}};
 
   const accountReady=wallet?.payoutAccount.status==='VERIFIED';const canWithdraw=role==='VENDOR'?wallet?.vendorStatus==='APPROVED':wallet?.riderStatus==='APPROVED';
+  const payoutStatus=wallet?.payoutAccount.status??'NOT_SET';
+  const payoutStatusLabel=accountReady?'Verified':payoutStatus==='PENDING'?'Verification pending':payoutStatus==='FAILED'?'Verification failed':'Not set up';
   const history=useMemo(()=>{
     const rows=wallet?.transactions??[];
     if(historyFilter==='ALL')return rows;
@@ -70,6 +72,22 @@ export default function VendorWalletScreen({token,colors:c,role='VENDOR'}:{token
           <Text style={s.quickActionText}>Refresh</Text>
         </Pressable>
       </View>
+
+      {role==='RIDER'&&<View style={s.card}>
+        <View style={s.sectionTop}>
+          <View style={s.sectionIcon}><Ionicons name="card-outline" size={20} color={c.green}/></View>
+          <View style={s.flex}><Text style={s.sectionTitle}>Rider payout account</Text><Text style={s.copy}>Account used to receive your delivery earnings.</Text></View>
+          <View style={[s.statusPill,accountReady?s.statusGood:payoutStatus==='FAILED'?s.statusFailed:s.statusWait]}><Text style={[s.statusText,payoutStatus==='FAILED'&&s.statusFailedText]}>{payoutStatusLabel}</Text></View>
+        </View>
+        <Text style={s.copyStrong}>{accountReady
+          ? `Verified with ${wallet.payoutAccount.bankName??'your bank'}, account ending ${wallet.payoutAccount.accountLast4??'----'}. You can update it any time.`
+          : payoutStatus==='PENDING'
+            ? 'Your account is awaiting verification. Withdrawals stay unavailable until verification is complete.'
+            : payoutStatus==='FAILED'
+              ? 'Verification failed. Update your bank details and try again. Withdrawals stay unavailable until an account is verified.'
+              : 'No verified payout account yet. Add one to receive withdrawals. You can set this up now or later.'}</Text>
+        <PrimaryButton title={accountReady?'Update payout account':'Set up payout account'} secondary disabled={accountBusy||bankLoading} onPress={()=>{setError('');setBankModal(false);setPayoutModal(true);}} style={s.button}/>
+      </View>}
 
       <View style={s.card}><View style={s.sectionTop}>      <View style={s.sectionIcon}><Ionicons name="business-outline" size={20} color={c.green}/></View><View style={s.flex}><Text style={s.sectionTitle}>Paystack deposit account</Text><Text style={s.copy}>Automatic dedicated account for your wallet.</Text></View><View style={[s.statusPill,wallet.dva.status==='ACTIVE'&&wallet.dva.accountNumber?s.statusGood:wallet.dva.status==='FAILED'?s.statusFailed:s.statusWait]}><Text style={[s.statusText,wallet.dva.status==='FAILED'&&s.statusFailedText]}>{wallet.dva.status==='ACTIVE'&&wallet.dva.accountNumber?'Ready':wallet.dva.status==='FAILED'?'Setup failed':'Setting up'}</Text></View></View>{wallet.dva.accountNumber?<View style={s.accountNumber}><Text style={s.accountLabel}>{wallet.dva.bankName??'Dedicated account'}</Text><Text selectable style={s.number}>{wallet.dva.accountNumber}</Text><Text selectable style={s.copy}>{wallet.dva.accountName??(role==='VENDOR'?'Smile vendor wallet':'Smile rider wallet')}</Text></View>:<Text style={s.copyStrong}>{wallet.dva.status==='FAILED'?'Your dedicated account could not be created. Check your profile has a valid email and phone number, then retry.':'Paystack is setting up your dedicated account. This screen updates automatically.'}</Text>}{wallet.dva.status==='FAILED'&&<PrimaryButton title={dvaRetryBusy?'Retrying…':'Retry account setup'} secondary disabled={dvaRetryBusy} onPress={()=>void retryDva()} style={s.button} />}{dvaRetryError?<Text style={s.error}>{dvaRetryError}</Text>:null}</View>
 

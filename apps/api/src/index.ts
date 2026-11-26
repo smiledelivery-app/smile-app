@@ -1,5 +1,8 @@
 import dotenv from 'dotenv';
-dotenv.config({path:process.env.ENV_FILE ?? '../../.env'});
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+const envFile = process.env.ENV_FILE ?? [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')].find(existsSync);
+if(envFile)dotenv.config({path:envFile});
 import cors from 'cors';
 import express, { type Request } from 'express';
 import helmet from 'helmet';
