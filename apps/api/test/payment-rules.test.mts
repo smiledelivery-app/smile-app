@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPaystackRefund, PaystackError, verifyPaystackTransaction } from '../src/paystack.ts';
+import { createPaystackRefund, PaystackAccountResolutionError, PaystackError, resolvePaystackBankAccount, verifyPaystackTransaction } from '../src/paystack.ts';
 import {
   buildCustomerWalletActivity,
   isCancelledOrRefundOrderStatus,
@@ -71,6 +71,22 @@ test('Paystack transaction verification validates integer minor-unit amounts and
   assert.equal(verified.channel, 'dedicated_nuban');
   assert.equal(verified.customerCode, 'CUS_123');
   assert.equal(verified.accountNumber, '9988776655');
+});
+
+test('Paystack payout account resolution distinguishes account mismatches from provider outages', async () => {
+  const invalidAccount: typeof fetch = async () =>
+    new Response(JSON.stringify({ status: false, message: 'Could not resolve account number' }), { status: 400 });
+  await assert.rejects(
+    () => resolvePaystackBankAccount('0123456789', '044', 'sk_test_secret', invalidAccount),
+    PaystackAccountResolutionError,
+  );
+
+  const providerUnavailable: typeof fetch = async () =>
+    new Response(JSON.stringify({ status: false, message: 'Service unavailable' }), { status: 503 });
+  await assert.rejects(
+    () => resolvePaystackBankAccount('0123456789', '044', 'sk_test_secret', providerUnavailable),
+    (error: unknown) => error instanceof PaystackError && !(error instanceof PaystackAccountResolutionError),
+  );
 });
 
 test('Paystack DVA and refund webhook parsers handle nested provider payloads safely', () => {

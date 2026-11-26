@@ -12,7 +12,7 @@ import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './d
 import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
 import { createProofCode, proofSubject } from './proof-codes.js';
 import { createRiderNinUploadSignature, createRiderProfileImageUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
-import { PaystackError, assignTitanDva, createPaystackCustomer, createPaystackRefund, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
+import { PaystackAccountResolutionError, PaystackError, assignTitanDva, createPaystackCustomer, createPaystackRefund, createPaystackTransferRecipient, initiatePaystackTransfer, initializePaystackTransaction, listPaystackBanks, resolvePaystackBankAccount, verifyPaystackSignature, verifyPaystackTransaction } from './paystack.js';
 import { buildCustomerWalletActivity, isCancelledOrRefundOrderStatus, parsePaystackWebhookDva, parsePaystackWebhookRefund, shouldAllowOrderPayment } from './payment-rules.js';
 import { checkPhoneVerification, PhoneVerificationError, PHONE_VERIFICATION_EXPIRY_MINUTES, sendPhoneVerification, type PhoneVerificationChannel, type PhoneVerificationProviderResponse } from './phone-verification.js';
 import { hasAdminPermission, isAdminRole, type AdminPermission } from './admin-permissions.js';
@@ -937,20 +937,44 @@ app.delete('/api/v1/vendor/products/:productId/addons/:addonId',requireUser,requ
 });
 
 app.post('/api/v1/rider/onboarding',requireUser,async (req:AuthRequest,res,next)=>{
-  const input=riderApplicationInput.safeParse(req.body);if(!input.success)return res.status(400).json({error:{code:'INVALID_APPLICATION',message:'Complete the profile photo, identity, vehicle, guarantor, bank, service area, and terms fields.'}});
+  const input=riderApplicationInput.safeParse(req.body);
+  if(!input.success){
+    const invalidProfileImage=input.error.issues.some(issue=>issue.path[0]==='profileImagePublicId'||issue.path[0]==='profileImageUrl');
+    if(invalidProfileImage)return res.status(400).json({error:{code:'INVALID_PROFILE_IMAGE',message:'Choose and upload a valid profile photo before submitting your rider application.'}});
+    return res.status(400).json({error:{code:'INVALID_APPLICATION',message:'Complete the identity, vehicle, guarantor, bank, service area, and terms fields.'}});
+  }
   try {
     if(!input.data.ninDocumentPublicId.startsWith(`smile/riders/${req.auth!.userId}/identity/`))return res.status(400).json({error:{code:'INVALID_NIN_DOCUMENT',message:'Upload your own NIN document before submitting.'}});
     const cloudName=process.env.CLOUDINARY_CLOUD_NAME?.trim();let imageUrl:URL|undefined;try{imageUrl=new URL(input.data.profileImageUrl);}catch{}
     if(!input.data.profileImagePublicId.startsWith(`smile/riders/${req.auth!.userId}/profile/`)||!cloudName||imageUrl?.hostname!=='res.cloudinary.com'||!imageUrl.pathname.startsWith(`/${cloudName}/image/upload/`)||!imageUrl.pathname.includes(input.data.profileImagePublicId))return res.status(400).json({error:{code:'INVALID_PROFILE_IMAGE',message:'Upload your own profile image before submitting.'}});
+    const dob=new Date(`${input.data.dateOfBirth}T00:00:00.000Z`);if(dob>=new Date())return res.status(400).json({error:{code:'INVALID_DATE_OF_BIRTH',message:'Enter a valid date of birth.'}});
     const existing=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId}});
     if(existing)return res.status(409).json({error:{code:'APPLICATION_EXISTS',message:'A rider application already exists for this account.',status:existing.status}});
-    const banks=await listPaystackBanks(paystackSecret());const bank=banks.find(row=>row.code===input.data.bankCode);if(!bank)return res.status(400).json({error:{code:'BANK_NOT_AVAILABLE',message:'Choose a supported Nigerian commercial bank.'}});
-    const resolved=await resolvePaystackBankAccount(input.data.accountNumber,input.data.bankCode,paystackSecret());const recipient=await createPaystackTransferRecipient({name:resolved.accountName,accountNumber:resolved.accountNumber,bankCode:input.data.bankCode},paystackSecret());
-    const ninCiphertext=encryptRiderNin(input.data.nin);const guarantorNinCiphertext=encryptRiderNin(input.data.guarantorNin);const dob=new Date(`${input.data.dateOfBirth}T00:00:00.000Z`);if(dob>=new Date())return res.status(400).json({error:{code:'INVALID_DATE_OF_BIRTH',message:'Enter a valid date of birth.'}});
-    const profile=await prisma.$transaction(async tx=>{const user=await tx.user.findUniqueOrThrow({where:{id:req.auth!.userId}});if(!user.roles.includes(Role.RIDER))await tx.user.update({where:{id:user.id},data:{roles:[...user.roles,Role.RIDER]}});const created=await tx.riderProfile.create({data:{userId:user.id,vehicleType:input.data.vehicleType,serviceArea:input.data.serviceArea,dateOfBirth:dob,ninCiphertext,ninDocumentPublicId:input.data.ninDocumentPublicId,ninDocumentVersion:input.data.ninDocumentVersion,profileImageUrl:input.data.profileImageUrl,plateNumber:input.data.plateNumber.trim()||null,residentialAddress:input.data.residentialAddress,guarantorName:input.data.guarantorName,guarantorNinCiphertext,guarantorAddress:input.data.guarantorAddress,status:VendorStatus.PENDING_REVIEW,available:false}});await tx.wallet.upsert({where:{userId:user.id},update:{payoutAccountLast4:resolved.accountNumber.slice(-4),payoutAccountName:resolved.accountName,payoutBankName:bank.name,payoutBankCode:input.data.bankCode,payoutRecipientCode:recipient.recipientCode,payoutStatus:'VERIFIED'},create:{userId:user.id,payoutAccountLast4:resolved.accountNumber.slice(-4),payoutAccountName:resolved.accountName,payoutBankName:bank.name,payoutBankCode:input.data.bankCode,payoutRecipientCode:recipient.recipientCode,payoutStatus:'VERIFIED'}});return created;});
+    let payoutSetup:{payoutAccountLast4:string;payoutAccountName:string;payoutBankName:string;payoutBankCode:string;payoutRecipientCode:string;payoutStatus:'VERIFIED'}|null=null;
+    if(/^\d{10}$/.test(input.data.accountNumber)&&input.data.bankCode.length>=2){
+      try{
+        const banks=await listPaystackBanks(paystackSecret());const bank=banks.find(row=>row.code===input.data.bankCode);
+        if(bank){
+          const resolved=await resolvePaystackBankAccount(input.data.accountNumber,input.data.bankCode,paystackSecret());
+          const recipient=await createPaystackTransferRecipient({name:resolved.accountName,accountNumber:resolved.accountNumber,bankCode:input.data.bankCode},paystackSecret());
+          payoutSetup={payoutAccountLast4:resolved.accountNumber.slice(-4),payoutAccountName:resolved.accountName,payoutBankName:bank.name,payoutBankCode:input.data.bankCode,payoutRecipientCode:recipient.recipientCode,payoutStatus:'VERIFIED'};
+        }else console.warn(JSON.stringify({event:'rider_payout_setup_deferred',userId:req.auth!.userId,reason:'bank_not_available'}));
+      }catch(error){
+        if(error instanceof PaystackError||error instanceof TypeError)console.warn(JSON.stringify({event:'rider_payout_setup_deferred',userId:req.auth!.userId,reason:error instanceof PaystackAccountResolutionError?'account_not_verified':'provider_unavailable'}));
+        else throw error;
+      }
+    }
+    const ninCiphertext=encryptRiderNin(input.data.nin);const guarantorNinCiphertext=encryptRiderNin(input.data.guarantorNin);
+    const application=await prisma.$transaction(async tx=>{
+      const user=await tx.user.findUniqueOrThrow({where:{id:req.auth!.userId}});
+      if(!user.roles.includes(Role.RIDER))await tx.user.update({where:{id:user.id},data:{roles:[...user.roles,Role.RIDER]}});
+      const profile=await tx.riderProfile.create({data:{userId:user.id,vehicleType:input.data.vehicleType,serviceArea:input.data.serviceArea,dateOfBirth:dob,ninCiphertext,ninDocumentPublicId:input.data.ninDocumentPublicId,ninDocumentVersion:input.data.ninDocumentVersion,profileImageUrl:input.data.profileImageUrl,plateNumber:input.data.plateNumber.trim()||null,residentialAddress:input.data.residentialAddress,guarantorName:input.data.guarantorName,guarantorNinCiphertext,guarantorAddress:input.data.guarantorAddress,status:VendorStatus.PENDING_REVIEW,available:false}});
+      const wallet=await tx.wallet.upsert({where:{userId:user.id},update:payoutSetup??{},create:{userId:user.id,...(payoutSetup??{})}});
+      return {profile,payoutAccountStatus:wallet.payoutStatus};
+    });
     void provisionDva(req.auth!.userId);
-    return res.status(201).json({data:{id:profile.id,status:profile.status,available:profile.available}});
-  }catch(error){if(error instanceof PaystackError)return res.status(503).json({error:{code:'BANK_VERIFICATION_UNAVAILABLE',message:'Could not verify the rider payout account. Try again later.'}});if(error instanceof Error&&error.message.includes('RIDER_PII_ENCRYPTION_KEY'))return res.status(503).json({error:{code:'PII_ENCRYPTION_UNAVAILABLE',message:'Rider identity storage is not configured.'}});if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return res.status(409).json({error:{code:'APPLICATION_EXISTS',message:'A rider application already exists.'}});return next(error);}
+    return res.status(201).json({data:{id:application.profile.id,status:application.profile.status,available:application.profile.available,payoutAccountStatus:application.payoutAccountStatus}});
+  }catch(error){if(error instanceof PaystackAccountResolutionError)return res.status(400).json({error:{code:'PAYOUT_ACCOUNT_MISMATCH',message:'The account number could not be matched to the selected bank. Check both details and try again.'}});if(error instanceof PaystackError)return res.status(503).json({error:{code:'BANK_VERIFICATION_UNAVAILABLE',message:'Bank verification is temporarily unavailable. Please try again later.'}});if(error instanceof Error&&error.message.includes('RIDER_PII_ENCRYPTION_KEY'))return res.status(503).json({error:{code:'PII_ENCRYPTION_UNAVAILABLE',message:'Rider identity storage is not configured.'}});if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return res.status(409).json({error:{code:'APPLICATION_EXISTS',message:'A rider application already exists.'}});return next(error);}
 });
 app.get('/api/v1/rider/profile',requireUser,requireRole(Role.RIDER),async(req:AuthRequest,res,next)=>{
   try{const profile=await prisma.riderProfile.findUnique({where:{userId:req.auth!.userId},select:{id:true,status:true,available:true,vehicleType:true,serviceArea:true,profileImageUrl:true,location:{select:{updatedAt:true}}}});if(!profile)return res.status(404).json({error:{code:'RIDER_PROFILE_NOT_FOUND',message:'No rider application is linked to this account.'}});return res.json({data:{...profile,suspended:profile.status===VendorStatus.SUSPENDED}});}catch(error){return next(error);}

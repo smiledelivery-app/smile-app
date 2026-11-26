@@ -2,7 +2,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const baseUrl='https://api.paystack.co';
 
-export class PaystackError extends Error {}
+export class PaystackError extends Error {
+  readonly status?:number;
+  constructor(message:string,status?:number){super(message);this.name='PaystackError';this.status=status;}
+}
+export class PaystackAccountResolutionError extends PaystackError {}
 export type PaystackInitialization={authorizationUrl:string;accessCode:string;reference:string};
 export type PaystackVerification={reference:string;amountMinor:number;status:string;metadata:Record<string,unknown>;channel:string|null;customerCode:string|null;accountNumber:string|null};
 export type PaystackBank={name:string;code:string};
@@ -23,7 +27,7 @@ async function request<T>(path:string,secret:string,init:RequestInit={},fetcher:
   if(!secret) throw new PaystackError('Paystack is not configured.');
   const response=await fetcher(`${baseUrl}${path}`,{...init,headers:{authorization:`Bearer ${secret}`,accept:'application/json','content-type':'application/json',...init.headers}});
   const body=readRecord(await response.json().catch(()=>null));
-  if(!response.ok||body.status!==true) throw new PaystackError(readString(body.message)??'Paystack request failed.');
+  if(!response.ok||body.status!==true) throw new PaystackError(readString(body.message)??'Paystack request failed.',response.status);
   return body.data as T;
 }
 
@@ -67,9 +71,12 @@ export async function listPaystackBanks(secret:string,fetcher?:typeof fetch):Pro
 
 export async function resolvePaystackBankAccount(accountNumber:string,bankCode:string,secret:string,fetcher?:typeof fetch) {
   const query=new URLSearchParams({account_number:accountNumber,bank_code:bankCode});
-  const data=readRecord(await request<unknown>(`/bank/resolve?${query.toString()}`,secret,{},fetcher));
+  let result:unknown;
+  try{result=await request<unknown>(`/bank/resolve?${query.toString()}`,secret,{},fetcher);}
+  catch(error){if(error instanceof PaystackError&&(error.status===400||error.status===422))throw new PaystackAccountResolutionError('Paystack could not match this account number to the selected bank.');throw error;}
+  const data=readRecord(result);
   const resolvedNumber=readString(data.account_number),accountName=readString(data.account_name);
-  if(resolvedNumber!==accountNumber||!accountName)throw new PaystackError('Paystack could not verify this bank account.');
+  if(resolvedNumber!==accountNumber||!accountName)throw new PaystackAccountResolutionError('Paystack could not match this account number to the selected bank.');
   return {accountNumber:resolvedNumber,accountName};
 }
 

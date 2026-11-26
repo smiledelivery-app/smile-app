@@ -19,6 +19,17 @@ test('a complete rider application with a profile photo is accepted',()=>{
   if(parsed.success)assert.equal('ninDocumentName' in parsed.data,false);
 });
 
+test('a rider application can be submitted before payout details are verified',()=>{
+  const {accountNumber,bankCode,...withoutPayout}=application();
+  const parsed=riderApplicationInput.safeParse(withoutPayout);
+  assert.equal(parsed.success,true);
+  if(parsed.success){
+    assert.equal(parsed.data.accountNumber,'');
+    assert.equal(parsed.data.bankCode,'');
+  }
+  assert.equal(riderApplicationInput.safeParse({...application(),accountNumber:'0123'}).success,true);
+});
+
 test('a rider application without a valid profile photo is rejected',()=>{
   // Earlier app builds left the photo fields as empty strings when no photo was chosen.
   for(const photo of [undefined,'']){
@@ -38,7 +49,7 @@ test('motorised vehicles need a plate number and a bicycle may leave it blank',(
   assert.equal(riderApplicationInput.safeParse({...application(),vehicleType:'BICYCLE',plateNumber:'AB'}).success,false);
 });
 
-test('identity, guarantor, bank and terms fields must each be complete',()=>{
-  const invalid=[{nin:'1234'},{ninDocumentVersion:'1794000000'},{dateOfBirth:'15/04/1999'},{guarantorNin:''},{guarantorAddress:'short'},{accountNumber:'012345678'},{bankCode:''},{termsAccepted:false},{residentialAddress:'short'}];
+test('identity, guarantor and terms fields must each be complete',()=>{
+  const invalid=[{nin:'1234'},{ninDocumentVersion:'1794000000'},{dateOfBirth:'15/04/1999'},{guarantorNin:''},{guarantorAddress:'short'},{termsAccepted:false},{residentialAddress:'short'}];
   for(const field of invalid)assert.equal(riderApplicationInput.safeParse({...application(),...field}).success,false,JSON.stringify(field));
 });

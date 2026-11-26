@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// Every field is required, including the profile photo. A field that arrives
-// blank counts as missing, so a partial application never reaches review.
+// Application identity and profile fields are required; payout verification
+// is optional at submission time so provider outages do not block review.
 export const riderApplicationInput = z.object({
   vehicleType:z.enum(['BICYCLE','MOTORCYCLE','TRICYCLE','CAR']),
   serviceArea:z.string().trim().min(2).max(100),
@@ -16,8 +16,8 @@ export const riderApplicationInput = z.object({
   guarantorName:z.string().trim().min(2).max(100),
   guarantorNin:z.string().regex(/^\d{11}$/),
   guarantorAddress:z.string().trim().min(8).max(250),
-  accountNumber:z.string().trim().regex(/^\d{10}$/),
-  bankCode:z.string().trim().min(2).max(12),
+  accountNumber:z.string().trim().max(10).optional().default(''),
+  bankCode:z.string().trim().max(12).optional().default(''),
   termsAccepted:z.literal(true),
 }).superRefine((data,ctx)=>{
   if(data.vehicleType!=='BICYCLE'&&!data.plateNumber.trim())ctx.addIssue({code:z.ZodIssueCode.custom,path:['plateNumber'],message:'A plate number is required for this vehicle.'});
