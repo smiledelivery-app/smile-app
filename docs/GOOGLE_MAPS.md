@@ -1,9 +1,10 @@
-﻿# Rider maps and proximity dispatch
+# Rider maps and dispatch
 
 ## Flow
 
-- Rider devices send foreground GPS coordinates to `PUT /api/v1/rider/location`; only approved riders can post locations. Locations older than ten minutes are excluded from offers.
-- When a vendor marks an order ready, the API finds available riders with a fresh pin, no active delivery, and no pending offer. It filters by service area and maximum straight-line pickup radius, then asks Google Routes API for road distance to the vendor. The three closest reachable riders within `RIDER_MAX_PICKUP_KM` receive expiring offers. Google calls happen outside the database transaction; a serializable transaction and unique rider/delivery constraints guard offer creation and acceptance.
+- Rider devices send foreground GPS coordinates to `PUT /api/v1/rider/location`; only approved riders can post locations.
+- `RIDER_DISPATCH_MODE` defaults to `global`, which sends each ready order to all approved, available riders without location or service-area filtering. Eligible riders must have no active delivery, pending offer, or cancellation-limit block. Offers expire after two minutes.
+- Set `RIDER_DISPATCH_MODE=proximity` to restore location-based dispatch: the API requires a fresh rider pin, filters by service area and maximum straight-line pickup radius, then asks Google Routes API for road distance to the vendor. The three closest reachable riders within `RIDER_MAX_PICKUP_KM` receive offers. Google calls happen outside the database transaction; a serializable transaction and unique rider/delivery constraints guard offer creation and acceptance.
 - If routing is not configured, development uses the explicitly non-production straight-line fallback. Production leaves the delivery unassigned unless `GOOGLE_MAPS_ALLOW_STRAIGHT_LINE_FALLBACK=true` is deliberately enabled.
 - The assigned rider can request `GET /api/v1/rider/deliveries/:deliveryId/route` for only their own active pickup or drop-off leg. The API returns a driving route polyline and ETA. The operations app renders it with `react-native-maps` and provides Google Maps navigation handoff. Location tracking remains foreground-only.
 
@@ -13,6 +14,7 @@ Enable billing and these APIs in the Google Cloud project: **Routes API** and **
 
 - `GOOGLE_MAPS_ROUTES_API_KEY`: server key for route matrices and rider directions.
 - `GOOGLE_MAPS_GEOCODING_API_KEY`: server key used to locate customer/vendor street addresses. It falls back to the Routes key if omitted.
+- `RIDER_DISPATCH_MODE`: `global` (default) or `proximity`.
 - `GOOGLE_ROUTES_MAX_ORIGINS`: max riders per matrix request, 1–49 (default 25).
 - `RIDER_MAX_PICKUP_KM`: maximum route distance for rider pickup (default 12 km).
 - `GOOGLE_MAPS_ALLOW_STRAIGHT_LINE_FALLBACK`: default `false`; production-only emergency override.

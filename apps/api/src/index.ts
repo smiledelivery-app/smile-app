@@ -11,7 +11,7 @@ import { createCipheriv, createHash, randomBytes, scrypt, timingSafeEqual } from
 import { z } from 'zod';
 import { calculateDeliveryFeeMinor, calculateOrderAmounts, canVendorTransition, DEFAULT_PAYMENT_FEE_SETTINGS, resolvePaymentFeeSettings } from './order-rules.js';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from './catalog-rules.js';
-import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from './dispatch-rules.js';
+import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance, selectGlobalDispatchRiders } from './dispatch-rules.js';
 import { drivingRoute, geocode, geocodingConfigured, GoogleMapsError, placesConfigured, resolveAddressPlace, routesConfigured, routeDistances, suggestPlaces } from './google-map-service.js';
 import { createProofCode, proofSubject } from './proof-codes.js';
 import { createRiderNinUploadSignature, createRiderProfileImageUploadSignature, createVendorImageUploadSignature, MediaProviderError } from './media.js';
@@ -114,6 +114,8 @@ const phoneNumber = (raw:string) => {
 const tokenHash = (token:string) => createHash('sha256').update(token).digest('hex');
 const cancellationLimits={CUSTOMER:3,RIDER:3,VENDOR:5} as const;
 const activeDeliveryStatuses:DeliveryStatus[]=[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP];
+const riderDispatchMode=process.env.RIDER_DISPATCH_MODE??'global';
+if(riderDispatchMode!=='global'&&riderDispatchMode!=='proximity')throw new Error('RIDER_DISPATCH_MODE must be "global" or "proximity".');
 type CancellationRole=keyof typeof cancellationLimits;
 const cancellationReasons=['OUT_OF_STOCK','NOT_AVAILABLE','PRICE_CHANGED','VEHICLE_BREAKDOWN','NO_LONGER_INTERESTED','ORDERED_BY_MISTAKE','DELIVERY_TAKING_TOO_LONG','EMERGENCY','OTHER'] as const;
 function nigeriaDayRange(now=new Date()){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Lagos',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);const part=(name:string)=>Number(parts.find(item=>item.type===name)?.value);const start=new Date(Date.UTC(part('year'),part('month')-1,part('day'))-60*60_000);return {gte:start,lt:new Date(start.getTime()+24*60*60_000)};}
@@ -161,43 +163,50 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   if(!delivery||delivery.assignedRiderId) return 0;
   if(delivery.offers.some(offer=>offer.status===RiderOfferStatus.PENDING&&offer.expiresAt>new Date()))return 0;
   const vendor=delivery.order.vendor;
-  const pickup=await freshVendorCoordinates(vendor);
-  if(!pickup) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
   const blockedFromReoffer=new Set(delivery.offers.filter(offer=>offer.status!==RiderOfferStatus.EXPIRED).map(offer=>offer.riderId));
   const expiredOfferRiders=new Set(delivery.offers.filter(offer=>offer.status===RiderOfferStatus.EXPIRED).map(offer=>offer.riderId));
   const freshSince=new Date(Date.now()-10*60_000);
-  const candidateRiders=await prisma.riderProfile.findMany({where:{status:VendorStatus.APPROVED,available:true,user:{isDemo:false},location:{is:{updatedAt:{gte:freshSince}}},offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}}},deliveries:{none:{status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}},include:{location:true}});
+  const riderWhere:Prisma.RiderProfileWhereInput={status:VendorStatus.APPROVED,available:true,user:{isDemo:false},offers:{none:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}}},deliveries:{none:{status:{in:[DeliveryStatus.ASSIGNED,DeliveryStatus.PICKED_UP]}}}};
+  if(riderDispatchMode==='proximity')riderWhere.location={is:{updatedAt:{gte:freshSince}}};
+  const candidateRiders=await prisma.riderProfile.findMany({where:riderWhere,include:{location:true}});
   const riders=(await Promise.all(candidateRiders.map(async rider=>({rider,count:await cancellationCount(rider.userId)})))).filter(item=>item.count<cancellationLimits.RIDER).map(item=>item.rider);
-  const area=vendor.address.trim().toLowerCase();
-  const maxDistance=Number(process.env.RIDER_MAX_PICKUP_KM??12);
-  const configuredLimit=Number.parseInt(process.env.GOOGLE_ROUTES_MAX_ORIGINS??'25',10);
-  const shortlistLimit=Number.isFinite(configuredLimit)?Math.max(1,Math.min(49,configuredLimit)):25;
-  const located=riders.flatMap(rider=>rider.location?[{id:rider.id,latitude:Number(rider.location.latitude),longitude:Number(rider.location.longitude),serviceArea:rider.serviceArea,rider}]:[]);
-  const unoffered=new Set([...blockedFromReoffer,...expiredOfferRiders]);
-  let shortlist=nearestEligibleRiders(located,pickup,area,unoffered,maxDistance,shortlistLimit);
-  if(!shortlist.length&&expiredOfferRiders.size){
-    shortlist=nearestEligibleRiders(located,pickup,area,blockedFromReoffer,maxDistance,shortlistLimit);
-  }
-  const apiKey=mappingConfigured('routes');
-  let nearby:Array<{rider:(typeof shortlist)[number]['rider'];km:number;meters:number}> = [];
-  if(shortlist.length&&apiKey){
-    try{
-      const roadDistances=await routeDistances(shortlist.map(candidate=>({id:candidate.id,coordinate:{latitude:candidate.latitude,longitude:candidate.longitude}})),pickup);
-      nearby=rankRidersByRoadDistance(shortlist, new Map([...roadDistances].map(([id,result])=>[id,result.distanceMeters/1000])),maxDistance,3).map(candidate=>({rider:candidate.rider,km:candidate.pickupDistanceKm,meters:Math.round(roadDistances.get(candidate.id)!.distanceMeters)}));
-    }catch(error){
-      console.warn(JSON.stringify({event:'google_routes_dispatch_failed',deliveryId,error:error instanceof GoogleMapsError?error.message:'unknown'}));
-      if(process.env.NODE_ENV!=='production'||process.env.GOOGLE_MAPS_ALLOW_STRAIGHT_LINE_FALLBACK==='true')nearby=shortlist.slice(0,3).map(candidate=>({rider:candidate.rider,km:candidate.pickupDistanceKm,meters:Math.round(candidate.pickupDistanceKm*1000)}));
+  let offerRecipients:{rider:(typeof riders)[number];meters:number|null}[]=[];
+  if(riderDispatchMode==='global'){
+    offerRecipients=selectGlobalDispatchRiders(riders,blockedFromReoffer,expiredOfferRiders).map(rider=>({rider,meters:null}));
+  }else{
+    const pickup=await freshVendorCoordinates(vendor);
+    if(pickup){
+      const area=vendor.address.trim().toLowerCase();
+      const maxDistance=Number(process.env.RIDER_MAX_PICKUP_KM??12);
+      const configuredLimit=Number.parseInt(process.env.GOOGLE_ROUTES_MAX_ORIGINS??'25',10);
+      const shortlistLimit=Number.isFinite(configuredLimit)?Math.max(1,Math.min(49,configuredLimit)):25;
+      const located=riders.flatMap(rider=>rider.location?[{id:rider.id,latitude:Number(rider.location.latitude),longitude:Number(rider.location.longitude),serviceArea:rider.serviceArea,rider}]:[]);
+      const unoffered=new Set([...blockedFromReoffer,...expiredOfferRiders]);
+      let shortlist=nearestEligibleRiders(located,pickup,area,unoffered,maxDistance,shortlistLimit);
+      if(!shortlist.length&&expiredOfferRiders.size){
+        shortlist=nearestEligibleRiders(located,pickup,area,blockedFromReoffer,maxDistance,shortlistLimit);
+      }
+      const apiKey=mappingConfigured('routes');
+      if(shortlist.length&&apiKey){
+        try{
+          const roadDistances=await routeDistances(shortlist.map(candidate=>({id:candidate.id,coordinate:{latitude:candidate.latitude,longitude:candidate.longitude}})),pickup);
+          offerRecipients=rankRidersByRoadDistance(shortlist, new Map([...roadDistances].map(([id,result])=>[id,result.distanceMeters/1000])),maxDistance,3).map(candidate=>({rider:candidate.rider,meters:Math.round(roadDistances.get(candidate.id)!.distanceMeters)}));
+        }catch(error){
+          console.warn(JSON.stringify({event:'google_routes_dispatch_failed',deliveryId,error:error instanceof GoogleMapsError?error.message:'unknown'}));
+          if(process.env.NODE_ENV!=='production'||process.env.GOOGLE_MAPS_ALLOW_STRAIGHT_LINE_FALLBACK==='true')offerRecipients=shortlist.slice(0,3).map(candidate=>({rider:candidate.rider,meters:Math.round(candidate.pickupDistanceKm*1000)}));
+        }
+      }else if(shortlist.length&&process.env.NODE_ENV!=='production'){
+        offerRecipients=shortlist.slice(0,3).map(candidate=>({rider:candidate.rider,meters:Math.round(candidate.pickupDistanceKm*1000)}));
+      }
     }
-  }else if(shortlist.length&&process.env.NODE_ENV!=='production'){
-    nearby=shortlist.slice(0,3).map(candidate=>({rider:candidate.rider,km:candidate.pickupDistanceKm,meters:Math.round(candidate.pickupDistanceKm*1000)}));
   }
-  if(!nearby.length) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
+  if(!offerRecipients.length) { await prisma.delivery.updateMany({where:{id:deliveryId,assignedRiderId:null},data:{status:DeliveryStatus.UNASSIGNED}});return 0; }
   const expiresAt=new Date(Date.now()+120_000);
   const createdCount=await prisma.$transaction(async tx=>{
     const current=await tx.delivery.findUnique({where:{id:deliveryId},include:{offers:{where:{status:RiderOfferStatus.PENDING,expiresAt:{gt:new Date()}},select:{id:true}}}});
     if(!current||current.assignedRiderId||current.offers.length)return 0;
     let offersSent=0;
-    for(const {rider,meters} of nearby){
+    for(const {rider,meters} of offerRecipients){
       const existing=delivery.offers.find(offer=>offer.riderId===rider.id);
       if(existing){
         if(existing.status===RiderOfferStatus.EXPIRED){
@@ -215,7 +224,7 @@ async function dispatchDeliveryOffers(deliveryId:string) {
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
   if(createdCount){
     const shortId=String(delivery.order.displayNumber).padStart(9,'0');
-    const messages:NotificationInput[]=nearby.map(({rider})=>({
+    const messages:NotificationInput[]=offerRecipients.map(({rider})=>({
       userId:rider.userId,title:'New delivery available',
       body:`Pickup at ${vendor.name} · Order #${shortId}. Open the app to review this offer.`,
       type:'RIDER_OFFER',orderId:delivery.order.id,eventKey:`rider-offer:${deliveryId}:${rider.userId}:${expiresAt.getTime()}`,

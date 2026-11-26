@@ -12,7 +12,7 @@ import {
   SERVICE_FEE_MINOR,
 } from '../src/order-rules.ts';
 import { canAccessDemoFeatures, catalogSource, shouldUseMockCheckout, vendorIsOpenAfterReview } from '../src/catalog-rules.ts';
-import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance } from '../src/dispatch-rules.ts';
+import { distanceKm, nearestEligibleRiders, rankRidersByRoadDistance, selectGlobalDispatchRiders } from '../src/dispatch-rules.ts';
 import { computeDrivingDistances, computeDrivingRoute, geocodeAddress, GoogleMapsError } from '../src/google-maps.ts';
 import { createProofCode, proofSubject } from '../src/proof-codes.ts';
 import { initializePaystackTransaction, verifyPaystackSignature } from '../src/paystack.ts';
@@ -95,6 +95,19 @@ test('road distance ranking uses route distances, excludes unreachable or over-r
   const candidates=[{id:'a'},{id:'b'},{id:'c'},{id:'no-route'}];
   const ranked=rankRidersByRoadDistance(candidates,new Map([['a',5.2],['b',2.4],['c',13]]),12,1);
   assert.deepEqual(ranked,[{id:'b',pickupDistanceKm:2.4}]);
+});
+
+test('global rider dispatch offers all eligible riders regardless of location and retries expired offers',()=>{
+  const riders=[{id:'far-away'},{id:'different-region'},{id:'no-location'}];
+  assert.deepEqual(selectGlobalDispatchRiders(riders,new Set(),new Set()),riders);
+  assert.deepEqual(
+    selectGlobalDispatchRiders(riders,new Set(['different-region']),new Set(['far-away'])),
+    [{id:'no-location'}],
+  );
+  assert.deepEqual(
+    selectGlobalDispatchRiders(riders,new Set(['different-region']),new Set(['far-away','no-location'])),
+    [{id:'far-away'},{id:'no-location'}],
+  );
 });
 
 test('vendor pickup and customer delivery proof codes are stable per delivery+rider and purpose-separated',()=>{

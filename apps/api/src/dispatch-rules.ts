@@ -1,6 +1,11 @@
 export type RiderCandidate={id:string;latitude:number;longitude:number;serviceArea:string};
 export type NearbyRider=RiderCandidate&{pickupDistanceKm:number};
 
+export function selectGlobalDispatchRiders<T extends {id:string}>(riders:T[],previouslyOffered:Set<string>,expiredOffers:Set<string>):T[] {
+  const firstOffers=riders.filter(rider=>!previouslyOffered.has(rider.id)&&!expiredOffers.has(rider.id));
+  return firstOffers.length?firstOffers:riders.filter(rider=>!previouslyOffered.has(rider.id));
+}
+
 export function rankRidersByRoadDistance<T extends {id:string}>(riders:T[],roadDistancesKm:ReadonlyMap<string,number>,maxDistanceKm:number,limit=3):(T&{pickupDistanceKm:number})[] {
   if(!Number.isFinite(maxDistanceKm)||maxDistanceKm<0||!Number.isInteger(limit)||limit<0) return [];
   return riders.flatMap(rider=>{
