@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { riderApplicationInput } from '../src/rider-application.ts';
+import { riderPiiEncryptionKey } from '../src/rider-pii.ts';
 
 // The payload the operations app sends once every field, including the photo, is filled.
 const application=()=>({
@@ -10,6 +12,16 @@ const application=()=>({
   plateNumber:'ABC 123 XY',residentialAddress:'20, Idigba, Ilorin',
   guarantorName:'Amina Yusuf',guarantorNin:'12345678901',guarantorAddress:'20, Idigba, Ilorin',
   accountNumber:'0123456789',bankCode:'044',termsAccepted:true,
+});
+
+test('rider PII encryption falls back to the access secret when the dedicated key is too short',()=>{
+  const accessSecret='access-secret-with-at-least-thirty-two-characters';
+  const key=riderPiiEncryptionKey({RIDER_PII_ENCRYPTION_KEY:'too-short',JWT_ACCESS_SECRET:accessSecret});
+  assert.deepEqual(key,createHash('sha256').update(accessSecret).digest());
+});
+
+test('rider PII encryption rejects configuration without a valid secret',()=>{
+  assert.throws(()=>riderPiiEncryptionKey({RIDER_PII_ENCRYPTION_KEY:'too-short',JWT_ACCESS_SECRET:'also-short'}),/at least 32 characters/);
 });
 
 test('a complete rider application with a profile photo is accepted',()=>{

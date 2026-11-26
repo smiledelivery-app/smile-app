@@ -23,7 +23,11 @@ import { accountDeletionPrecheckError } from './account-deletion.js';
 import { createNotifications, dispatchPushNotifications, logNotificationError, notificationCopy, type NotificationInput } from './notifications.js';
 import { vendorOperatingHoursInput } from './vendor-hours.js';
 import { riderApplicationInput } from './rider-application.js';
+import { riderPiiEncryptionKey } from './rider-pii.js';
 
+const configuredPiiKey=process.env.RIDER_PII_ENCRYPTION_KEY?.trim();
+const accessSecret=process.env.JWT_ACCESS_SECRET?.trim();
+if(configuredPiiKey&&configuredPiiKey.length<32&&accessSecret&&accessSecret.length>=32)console.warn(JSON.stringify({event:'rider_pii_encryption_key_invalid',fallback:'JWT_ACCESS_SECRET'}));
 const app = express();
 const prisma = new PrismaClient();
 const port = Number(process.env.API_PORT ?? 4100);
@@ -63,8 +67,7 @@ async function notifyOrderStatus(orderId:string,status:OrderStatus,extraRecipien
 function emitOrderStatusNotification(orderId:string,status:OrderStatus,extraRecipientUserId?:string) {
   void notifyOrderStatus(orderId,status,extraRecipientUserId).catch(error=>logNotificationError('order_notification_persistence_failed',error));
 }
-function piiKey(){const secret=process.env.RIDER_PII_ENCRYPTION_KEY?.trim()||process.env.JWT_ACCESS_SECRET?.trim();if(!secret||secret.length<32)throw new Error('RIDER_PII_ENCRYPTION_KEY must be configured with at least 32 characters.');return createHash('sha256').update(secret).digest();}
-function encryptRiderNin(value:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',piiKey(),iv);const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${encrypted.toString('base64url')}`;}
+function encryptRiderNin(value:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',riderPiiEncryptionKey(),iv);const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${encrypted.toString('base64url')}`;}
 app.disable('x-powered-by');
 app.use(helmet());
 function configuredOrigin(value:string|undefined) {
