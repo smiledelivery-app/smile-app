@@ -1,12 +1,16 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import MapView, { Marker, PROVIDER_GOOGLE, type MapPressEvent, type Region } from 'react-native-maps';
 import type { AppColors } from '../theme/colors';
 import { customerPalette, customerRadius } from '../theme/customer';
+import { hasNativeGoogleMapsSdk } from '../utils/google-maps';
 
 type Coordinate = { latitude: number; longitude: number };
 type Props = { point: Coordinate | null; colors: AppColors; onPick: (point: Coordinate) => void };
+
+const nigeriaRegion: Region = { latitude: 9.082, longitude: 8.6753, latitudeDelta: 9.8, longitudeDelta: 12.2 };
 
 const leafletMapHtml = `<!doctype html>
 <html>
@@ -48,7 +52,8 @@ const leafletMapHtml = `<!doctype html>
           map.setView(position, 15);
         };
         map.on('click', event => {
-          const { latitude, longitude } = event.latlng;
+          const latitude = event.latlng.lat;
+          const longitude = event.latlng.lng;
           window.setDeliveryPin(latitude, longitude);
           window.ReactNativeWebView.postMessage(JSON.stringify({type:'pick', latitude, longitude}));
         });
@@ -61,7 +66,48 @@ const leafletMapHtml = `<!doctype html>
 const setWebMapPin = (point: Coordinate) =>
   `window.setDeliveryPin(${point.latitude},${point.longitude});true;`;
 
-export default function AddressMapPicker({ point, colors, onPick }: Props) {
+function GoogleAddressMapPicker({ point, colors, onPick, onFallback }: Props & { onFallback: () => void }) {
+  const palette = customerPalette(colors);
+  const mapRef = useRef<MapView>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  useEffect(() => {
+    if (mapReady) return;
+    const timer = setTimeout(onFallback, 8000);
+    return () => clearTimeout(timer);
+  }, [mapReady, onFallback]);
+
+  useEffect(() => {
+    if (!point || !mapReady) return;
+    mapRef.current?.animateToRegion({ ...point, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 300);
+  }, [mapReady, point?.latitude, point?.longitude]);
+
+  return (
+    <View style={[styles.frame, { borderColor: palette.border }]}>
+      <MapView
+        ref={mapRef}
+        provider={PROVIDER_GOOGLE}
+        style={styles.map}
+        initialRegion={point ? { ...point, latitudeDelta: 0.025, longitudeDelta: 0.025 } : nigeriaRegion}
+        onMapReady={() => setMapReady(true)}
+        onPress={(event: MapPressEvent) => onPick(event.nativeEvent.coordinate)}
+        showsCompass
+        toolbarEnabled={false}
+      >
+        {point && <Marker coordinate={point} title="Delivery location" pinColor={palette.primary} />}
+      </MapView>
+      {!point && (
+        <View pointerEvents="none" style={[styles.hint, { backgroundColor: palette.surface }]}>
+          <Text style={[styles.hintText, { color: palette.ink }]}>
+            Tap the map to pin your delivery location
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function LeafletAddressMapPicker({ point, colors, onPick }: Props) {
   const palette = customerPalette(colors);
   const webMap = useRef<WebView>(null);
   const pointRef = useRef(point);
@@ -132,6 +178,15 @@ export default function AddressMapPicker({ point, colors, onPick }: Props) {
       )}
     </View>
   );
+}
+
+export default function AddressMapPicker({ point, colors, onPick }: Props) {
+  const [useFallback, setUseFallback] = useState(() => !hasNativeGoogleMapsSdk());
+  const triggerFallback = useCallback(() => setUseFallback(true), []);
+  if (!useFallback) {
+    return <GoogleAddressMapPicker point={point} colors={colors} onPick={onPick} onFallback={triggerFallback} />;
+  }
+  return <LeafletAddressMapPicker point={point} colors={colors} onPick={onPick} />;
 }
 
 const styles = StyleSheet.create({

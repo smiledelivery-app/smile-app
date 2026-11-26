@@ -31,6 +31,10 @@ module.exports = {
     runtimeVersion: { policy: 'appVersion' },
     extra: {
       ...base.extra,
+      googleMapsConfigured: {
+        android: Boolean(androidApiKey),
+        ios: Boolean(iosApiKey),
+      },
       eas: { ...base.extra?.eas, projectId },
     },
     android: {

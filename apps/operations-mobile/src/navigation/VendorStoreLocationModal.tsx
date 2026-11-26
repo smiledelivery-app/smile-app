@@ -15,7 +15,7 @@ type Props={visible:boolean;token:string;address:string;point:Coordinate|null;co
 
 export default function VendorStoreLocationModal({visible,token,address:initialAddress,point:initialPoint,colors,onClose,onSelect}:Props){
   const [query,setQuery]=useState(initialAddress);
-  const [address,setAddress]=useState('');
+  const [address,setAddress]=useState(initialAddress);
   const [point,setPoint]=useState<Coordinate|null>(initialPoint);
   const [searchEnabled,setSearchEnabled]=useState(false);
   const [suggestions,setSuggestions]=useState<PlaceSuggestion[]>([]);
@@ -56,16 +56,18 @@ export default function VendorStoreLocationModal({visible,token,address:initialA
   };
 
   const selectMapPoint=async(coordinate:Coordinate)=>{
+    if(!Number.isFinite(coordinate.latitude)||!Number.isFinite(coordinate.longitude)){setError('Could not read the selected map coordinates.');return;}
     const inNigeria=coordinate.latitude>=4.2&&coordinate.latitude<=13.95&&coordinate.longitude>=2.6&&coordinate.longitude<=14.7;
     if(!inNigeria){setError('Choose a point within Nigeria.');return;}
     setBusy(true);setError('');
     try{
-      const [place]=await Location.reverseGeocodeAsync(coordinate);
+      const results=await Location.reverseGeocodeAsync(coordinate);
+      const place=results?.[0];
       if(!place||(place.isoCountryCode?.toUpperCase()!=='NG'&&place.country?.toLowerCase()!=='nigeria'))throw new Error('Choose a point within Nigeria.');
       const line=[place.streetNumber,place.street,place.name].filter(Boolean).join(' ')||`Map pin (${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)})`;
       const city=place.city||place.district||place.region;
       if(!city)throw new Error('Could not read the area at this pin. Move the pin closer to a street.');
-      setPoint(coordinate);setAddress(`${line}, ${city}`);setQuery(`${line}, ${city}`);setSearchEnabled(false);setSuggestions([]);
+      setPoint({latitude:coordinate.latitude,longitude:coordinate.longitude});setAddress(`${line}, ${city}`);setQuery(`${line}, ${city}`);setSearchEnabled(false);setSuggestions([]);
     }catch(reason){setError(reason instanceof Error?reason.message:'Could not resolve this map pin.');}
     finally{setBusy(false);}
   };
@@ -80,6 +82,8 @@ export default function VendorStoreLocationModal({visible,token,address:initialA
     finally{setBusy(false);}
   };
 
+  if(!visible)return null;
+
   return <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
     <SafeAreaView style={s.screen}>
       <View style={s.header}>
@@ -89,7 +93,7 @@ export default function VendorStoreLocationModal({visible,token,address:initialA
       <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         <View style={s.searchBox}>
           <Ionicons name="search-outline" size={20} color={colors.green}/>
-          <TextInput value={query} onChangeText={(value:string)=>{setQuery(value);setSearchEnabled(true);setAddress('');setError('');}} placeholder="Search street, area, or city" style={s.searchInput}/>
+          <TextInput value={query} onChangeText={(value:string)=>{setQuery(value);setSearchEnabled(true);setAddress('');setError('');}} placeholder="Search street, area, or city" placeholderTextColor={colors.muted} style={s.searchInput}/>
           {(searching||resolving)&&<ActivityIndicator color={colors.green}/>}
         </View>
         {suggestions.length>0&&<View style={s.suggestions}>{suggestions.map(item=><Pressable key={item.placeId} accessibilityRole="button" onPress={()=>void selectSuggestion(item)} style={s.suggestion}><Ionicons name="location-outline" size={17} color={colors.green}/><Text style={s.suggestionText}>{item.description}</Text></Pressable>)}</View>}

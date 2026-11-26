@@ -1,11 +1,13 @@
 import { AppText as Text } from '@makanza/mobile-ui';
 import { Bike, LocateFixed, MapPin } from 'lucide-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { OrderTracking } from '@makanza/mobile-core';
 import type { AppColors } from '../theme/colors';
 import { customerPalette, customerRadius } from '../theme/customer';
+import { hasNativeGoogleMapsSdk } from '../utils/google-maps';
 
 type Props = { tracking: OrderTracking | null; loading: boolean; error: string; colors: AppColors };
 type Coordinate = { latitude: number; longitude: number };
@@ -167,11 +169,182 @@ const trackingMapHtml = `<!doctype html>
   </body>
 </html>`;
 
-export default function OrderTrackingMap({ tracking, loading, error, colors: c }: Props) {
-  const p = customerPalette(c);
+function computeRegion(points: Coordinate[]): Region {
+  if (!points.length) {
+    return { latitude: 9.082, longitude: 8.6753, latitudeDelta: 9.8, longitudeDelta: 12.2 };
+  }
+  const lats = points.map(item => item.latitude);
+  const lngs = points.map(item => item.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  return {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max(0.015, (maxLat - minLat) * 1.8),
+    longitudeDelta: Math.max(0.015, (maxLng - minLng) * 1.8),
+  };
+}
+
+function GoogleTrackingMap({
+  vendor,
+  customer,
+  rider,
+  vendorName,
+  recenterSignal,
+  onFallback,
+}: {
+  vendor: Coordinate | null;
+  customer: Coordinate | null;
+  rider: Coordinate | null;
+  vendorName: string;
+  recenterSignal: number;
+  onFallback: () => void;
+}) {
+  const mapRef = useRef<MapView>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  const allPoints = useMemo(
+    () => [vendor, customer, rider].filter((item): item is Coordinate => !!item),
+    [vendor?.latitude, vendor?.longitude, customer?.latitude, customer?.longitude, rider?.latitude, rider?.longitude]
+  );
+
+  const initialRegion = useMemo(() => computeRegion(allPoints), []);
+
+  useEffect(() => {
+    if (mapReady) return;
+    const timer = setTimeout(onFallback, 8000);
+    return () => clearTimeout(timer);
+  }, [mapReady, onFallback]);
+
+  const fitMap = useCallback(() => {
+    if (!mapReady || !allPoints.length) return;
+    if (allPoints.length > 1) {
+      mapRef.current?.fitToCoordinates(allPoints, {
+        edgePadding: { top: 64, right: 48, bottom: 72, left: 48 },
+        animated: true,
+      });
+    } else {
+      mapRef.current?.animateToRegion({ ...allPoints[0], latitudeDelta: 0.015, longitudeDelta: 0.015 }, 300);
+    }
+  }, [mapReady, allPoints]);
+
+  useEffect(() => {
+    fitMap();
+  }, [fitMap, recenterSignal]);
+
+  return (
+    <MapView
+      ref={mapRef}
+      provider={PROVIDER_GOOGLE}
+      style={StyleSheet.absoluteFill}
+      initialRegion={initialRegion}
+      onMapReady={() => setMapReady(true)}
+      showsCompass={false}
+      toolbarEnabled={false}
+    >
+      {vendor && <Marker coordinate={vendor} title={vendorName} pinColor="#228B22" />}
+      {customer && <Marker coordinate={customer} title="Delivery address" pinColor="#e87c59" />}
+      {rider && <Marker coordinate={rider} title="Rider" pinColor="#194c3a" />}
+    </MapView>
+  );
+}
+
+function LeafletTrackingMap({
+  trackingPayload,
+  hasPins,
+  recenterSignal,
+  surfaceColor,
+  primaryColor,
+  inkColor,
+}: {
+  trackingPayload: {
+    vendor: Coordinate | null;
+    customer: Coordinate | null;
+    rider: Coordinate | null;
+    recent: boolean;
+    vendorName: string;
+  };
+  hasPins: boolean;
+  recenterSignal: number;
+  surfaceColor: string;
+  primaryColor: string;
+  inkColor: string;
+}) {
   const webMap = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
+
+  const payloadRef = useRef(trackingPayload);
+  payloadRef.current = trackingPayload;
+
+  useEffect(() => {
+    if (!mapReady || !hasPins) return;
+    webMap.current?.injectJavaScript(
+      `window.updateTrackingData(${JSON.stringify(trackingPayload)});true;`
+    );
+  }, [mapReady, hasPins, trackingPayload]);
+
+  useEffect(() => {
+    if (!mapReady || recenterSignal === 0) return;
+    webMap.current?.injectJavaScript('window.recenterMap();true;');
+  }, [mapReady, recenterSignal]);
+
+  const handleWebMessage = (event: WebViewMessageEvent) => {
+    let message: { type?: string };
+    try {
+      message = JSON.parse(event.nativeEvent.data) as typeof message;
+    } catch {
+      setMapError(true);
+      return;
+    }
+    if (message.type === 'ready') {
+      setMapReady(true);
+      setMapError(false);
+      if (payloadRef.current) {
+        webMap.current?.injectJavaScript(
+          `window.updateTrackingData(${JSON.stringify(payloadRef.current)});true;`
+        );
+      }
+    } else if (message.type === 'error') {
+      setMapError(true);
+    }
+  };
+
+  return (
+    <>
+      <WebView
+        ref={webMap}
+        style={StyleSheet.absoluteFill}
+        source={{ html: trackingMapHtml }}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        onMessage={handleWebMessage}
+        onError={() => setMapError(true)}
+      />
+      {!mapReady && !mapError && (
+        <View pointerEvents="none" style={[styles.loadingOverlay, { backgroundColor: surfaceColor }]}>
+          <ActivityIndicator color={primaryColor} />
+          <Text style={[styles.captionSub, { color: inkColor }]}>Loading tracking map…</Text>
+        </View>
+      )}
+      {mapError && (
+        <View pointerEvents="none" style={[styles.loadingOverlay, { backgroundColor: surfaceColor }]}>
+          <Text style={[styles.captionSub, { color: inkColor }]}>
+            Map could not load. Check your internet connection.
+          </Text>
+        </View>
+      )}
+    </>
+  );
+}
+
+export default function OrderTrackingMap({ tracking, loading, error, colors: c }: Props) {
+  const p = customerPalette(c);
+  const [useFallback, setUseFallback] = useState(() => !hasNativeGoogleMapsSdk());
+  const [recenterSignal, setRecenterSignal] = useState(0);
+  const triggerFallback = useCallback(() => setUseFallback(true), []);
 
   const vendor = point(tracking?.vendor?.latitude, tracking?.vendor?.longitude);
   const customer = point(tracking?.customer?.latitude, tracking?.customer?.longitude);
@@ -205,69 +378,33 @@ export default function OrderTrackingMap({ tracking, loading, error, colors: c }
     ]
   );
 
-  const payloadRef = useRef(trackingPayload);
-  payloadRef.current = trackingPayload;
-
-  useEffect(() => {
-    if (!mapReady || !hasPins) return;
-    webMap.current?.injectJavaScript(
-      `window.updateTrackingData(${JSON.stringify(trackingPayload)});true;`
-    );
-  }, [mapReady, hasPins, trackingPayload]);
-
   const recenter = () => {
-    webMap.current?.injectJavaScript('window.recenterMap();true;');
-  };
-
-  const handleWebMessage = (event: WebViewMessageEvent) => {
-    let message: { type?: string };
-    try {
-      message = JSON.parse(event.nativeEvent.data) as typeof message;
-    } catch {
-      setMapError(true);
-      return;
-    }
-    if (message.type === 'ready') {
-      setMapReady(true);
-      setMapError(false);
-      if (payloadRef.current) {
-        webMap.current?.injectJavaScript(
-          `window.updateTrackingData(${JSON.stringify(payloadRef.current)});true;`
-        );
-      }
-    } else if (message.type === 'error') {
-      setMapError(true);
-    }
+    setRecenterSignal(value => value + 1);
   };
 
   return (
     <View style={[styles.card, { backgroundColor: p.surface, borderColor: p.border }]}>
       <View style={styles.mapFrame}>
         {hasPins ? (
-          <>
-            <WebView
-              ref={webMap}
-              style={StyleSheet.absoluteFill}
-              source={{ html: trackingMapHtml }}
-              originWhitelist={['*']}
-              javaScriptEnabled
-              onMessage={handleWebMessage}
-              onError={() => setMapError(true)}
+          useFallback ? (
+            <LeafletTrackingMap
+              trackingPayload={trackingPayload}
+              hasPins={hasPins}
+              recenterSignal={recenterSignal}
+              surfaceColor={p.surface}
+              primaryColor={p.primary}
+              inkColor={p.ink}
             />
-            {!mapReady && !mapError && (
-              <View pointerEvents="none" style={[styles.loadingOverlay, { backgroundColor: p.surface }]}>
-                <ActivityIndicator color={p.primary} />
-                <Text style={[styles.captionSub, { color: p.ink }]}>Loading tracking map…</Text>
-              </View>
-            )}
-            {mapError && (
-              <View pointerEvents="none" style={[styles.loadingOverlay, { backgroundColor: p.surface }]}>
-                <Text style={[styles.captionSub, { color: p.ink }]}>
-                  Map could not load. Check your internet connection.
-                </Text>
-              </View>
-            )}
-          </>
+          ) : (
+            <GoogleTrackingMap
+              vendor={vendor}
+              customer={customer}
+              rider={rider}
+              vendorName={trackingPayload.vendorName}
+              recenterSignal={recenterSignal}
+              onFallback={triggerFallback}
+            />
+          )
         ) : (
           <View style={[styles.noMap, { backgroundColor: p.surfaceAlt }]}>
             <View style={[styles.noMapIcon, { backgroundColor: p.primarySoft }]}>

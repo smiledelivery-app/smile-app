@@ -69,6 +69,10 @@ module.exports = {
 
     extra: {
       ...base.extra,
+      googleMapsConfigured: {
+        android: Boolean(androidApiKey),
+        ios: Boolean(iosApiKey),
+      },
       ...(projectId
         ? {
             eas: {
