@@ -17,6 +17,9 @@ type PushPayload = {
   data: { notificationId: string; type: string; orderId?: string };
 };
 
+type PushNotification = { id: string; userId: string; title: string; body: string; type: string; orderId: string | null };
+type PushDevice = { id: string; userId: string; token: string };
+
 export function notificationCopy(status: string, orderId: string, vendorName: string, displayNumber?: number|null) {
   const shortId = displayNumber ? String(displayNumber).padStart(9,'0') : orderId.slice(-8).toUpperCase();
   const messages: Record<string, { title: string; body: string }> = {
@@ -58,9 +61,22 @@ export function expoPushPayload(notification: {
   };
 }
 
+export function buildPushPayloads(notifications:PushNotification[],devices:PushDevice[]) {
+  const byUser=new Map<string,PushNotification[]>();
+  for(const notification of notifications){
+    const userNotifications=byUser.get(notification.userId)??[];
+    userNotifications.push(notification);
+    byUser.set(notification.userId,userNotifications);
+  }
+  return devices.flatMap(device=>(byUser.get(device.userId)??[]).map(notification=>({
+    deviceId:device.id,
+    ...expoPushPayload(notification,device.token),
+  })));
+}
+
 export async function dispatchPushNotifications(
   prisma: PrismaClient,
-  notifications: Array<{ id: string; userId: string; title: string; body: string; type: string; orderId: string | null }>,
+  notifications: PushNotification[],
 ) {
   if (!notifications.length) return { attempted: 0, accepted: 0, failed: 0 };
   const devices = await prisma.pushDevice.findMany({
@@ -69,11 +85,7 @@ export async function dispatchPushNotifications(
   });
   if (!devices.length) return { attempted: 0, accepted: 0, failed: 0 };
 
-  const byUser = new Map(notifications.map(item => [item.userId, item]));
-  const payloads = devices.flatMap(device => {
-    const notification = byUser.get(device.userId);
-    return notification ? [{ deviceId: device.id, ...expoPushPayload(notification, device.token) }] : [];
-  });
+  const payloads=buildPushPayloads(notifications,devices);
   let accepted = 0;
   let failed = 0;
   const invalidTokens: string[] = [];
